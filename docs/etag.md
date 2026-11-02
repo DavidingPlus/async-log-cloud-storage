@@ -29,16 +29,43 @@ ETag 参与验证版本，是否允许缓存、何时需要验证还取决于 `C
 
 ## 断点续传：确认已有片段属于同一版本
 
-假设客户端已经保存文件前 1024 字节，并记住对应的强 ETag，可以请求后续字节：
+在下载场景中，下面几个字段分工不同：
+
+| 字段 | 所在位置 | 含义 | 示例 |
+| --- | --- | --- | --- |
+| `Range` | 请求头 | 客户端希望下载的字节区间 | `bytes=4-` |
+| `If-Range` | 请求头 | 用版本标识确认已有片段仍属于当前版本 | `"v1"` |
+| `Content-Range` | 响应头 | 实际返回的区间，以及完整下载内容的总大小 | `bytes 4-9/10` |
+| `Content-Length` | 请求头或响应头 | 本次请求或响应的正文长度，单位为字节 | `6` |
+
+`Range` 的字节编号从 0 开始，两端都包含。常见写法为 `bytes=2-4`（第 2～4 字节）、`bytes=4-`（从第 4 字节到末尾）、`bytes=-3`（最后 3 字节）。它可以单独使用；`If-Range` 则用于避免客户端把不同版本的片段拼接起来。[RFC 9110：字节区间](https://www.rfc-editor.org/rfc/rfc9110.html#section-14.1.2)
+
+假设完整文件内容为 `0123456789`，共 10 字节，ETag 为 `"v1"`。客户端已经保存前 4 字节 `0123`，可以请求剩余内容：
 
 ```http
 GET /download/a.txt HTTP/1.1
 Host: localhost:8081
-Range: bytes=1024-
+Range: bytes=4-
 If-Range: "v1"
 ```
 
-支持范围请求的服务端在标签匹配、范围有效时返回 `206 Partial Content`，发送指定片段并设置 `Content-Range`；标签不匹配时忽略范围条件，返回完整新文件。`If-Range` 使用 ETag 时必须使用强标签；没有 `Range` 时应忽略 `If-Range`。[RFC 9110：If-Range](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.5)
+支持范围请求的服务端在标签匹配、范围有效且可满足时返回：
+
+```http
+HTTP/1.1 206 Partial Content
+ETag: "v1"
+Accept-Ranges: bytes
+Content-Range: bytes 4-9/10
+Content-Length: 6
+
+456789
+```
+
+`Content-Range: bytes 4-9/10` 表示实际返回第 4～9 字节，完整内容共 10 字节。本次正文长度是 `9 - 4 + 1 = 6`，所以 `Content-Length` 为 6；206 响应中的这个长度不一定等于完整文件大小。客户端可将 `456789` 接到已有的 `0123` 后，恢复完整文件。[RFC 9110：Content-Range](https://www.rfc-editor.org/rfc/rfc9110.html#section-14.4)、[Content-Length](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.6)
+
+如果标签不匹配，服务端忽略 Range，返回 `200 OK` 和完整的新文件；客户端应替换旧片段，避免拼接不同版本。`If-Range` 使用 ETag 时必须使用强标签；没有 `Range` 时应忽略 `If-Range`，不能仅凭它返回 206。[RFC 9110：If-Range](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.5)
+
+如果请求的范围无法满足，例如对这个 10 字节文件请求 `bytes=10-`，服务端可返回 `416 Range Not Satisfiable`，并设置 `Content-Range: bytes */10`，说明没有可返回的有效区间，完整内容大小为 10 字节。普通完整下载的 200 响应不带 `Content-Range`。[RFC 9110：416](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.17)、[Content-Range](https://www.rfc-editor.org/rfc/rfc9110.html#section-14.4)
 
 仅比较标签后返回 `206`，却仍发送完整文件，不构成正确的断点续传实现。
 
