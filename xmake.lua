@@ -2,8 +2,8 @@ includes("config.lua")
 includes("@builtin/xpack")
 
 
-local project_name = "dlog-cloud-storage"
-local macro_prefix = "DLOG_CLOUD_STORAGE"
+local project_name = "async-log-cloud-storage"
+local macro_prefix = "ASYNC_LOG_CLOUD_STORAGE"
 local version = "0.0.0"
 
 -- 项目包依赖的唯一清单，每项填写 XMake 依赖规格字符串，例如 "fmt >=10.2.1"。common 对所有平台生效；windows 和 linux 分别只在对应目标平台生效。
@@ -21,7 +21,7 @@ set_version(version)
 
 set_xmakever("3.0.9")
 set_project(project_name)
-set_description("A Cloud Storage Application Powered By dlog.")
+set_description("A Cloud Storage Application Based on an Asynchronous Logging System.")
 set_languages("cxx17")
 
 add_rules("mode.debug", "mode.release")
@@ -162,7 +162,7 @@ if is_plat("linux") then
         set_formats("targz")
         set_basename(project_name .. "-server-$(plat)-$(arch)-$(mode)-v$(version)")
         set_title(project_name .. " Server")
-        set_description("A Cloud Storage Application Powered By dlog.")
+        set_description("A Cloud Storage Application Based on an Asynchronous Logging System.")
         add_targets(project_name .. "-server")
     xpack_end()
 end

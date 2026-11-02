@@ -1,6 +1,6 @@
 #include "globalmacros.h"
 
-#ifdef DLOG_CLOUD_STORAGE_OS_WIN32
+#ifdef ASYNC_LOG_CLOUD_STORAGE_OS_WIN32
 #include <winsock2.h>
 #endif
 
@@ -61,7 +61,7 @@ namespace
 
         static void SetUpTestSuite()
         {
-#ifdef DLOG_CLOUD_STORAGE_OS_WIN32
+#ifdef ASYNC_LOG_CLOUD_STORAGE_OS_WIN32
             WSADATA data{};
             ASSERT_EQ(WSAStartup(MAKEWORD(2, 2), &data), 0);
             s_winsockInitialized = true;
@@ -70,7 +70,7 @@ namespace
 
         static void TearDownTestSuite()
         {
-#ifdef DLOG_CLOUD_STORAGE_OS_WIN32
+#ifdef ASYNC_LOG_CLOUD_STORAGE_OS_WIN32
             if (s_winsockInitialized)
             {
                 EXPECT_EQ(WSACleanup(), 0);
@@ -93,7 +93,7 @@ namespace
         EventBasePtr m_base{nullptr, event_base_free};
         CallbackResult m_result;
 
-#ifdef DLOG_CLOUD_STORAGE_OS_WIN32
+#ifdef ASYNC_LOG_CLOUD_STORAGE_OS_WIN32
         inline static bool s_winsockInitialized = false;
 #endif
     };

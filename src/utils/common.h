@@ -1,5 +1,5 @@
-#ifndef _DLOG_CLOUD_STORAGE_UTILS_COMMON_H_
-#define _DLOG_CLOUD_STORAGE_UTILS_COMMON_H_
+#ifndef _ASYNC_LOG_CLOUD_STORAGE_UTILS_COMMON_H_
+#define _ASYNC_LOG_CLOUD_STORAGE_UTILS_COMMON_H_
 
 #include "globalmacros.h"
 
@@ -7,7 +7,7 @@
 #include <filesystem>
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
 
 
 // 返回当前进程可执行文件的绝对路径，包含文件名，不受当前工作目录影响。获取失败时抛出 std::system_error（包括派生的 std::filesystem::filesystem_error）。
@@ -45,7 +45,7 @@ std::string urlDecode(const std::string &url);
 std::string escapeHtmlText(const std::string &text);
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_END
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_END
 
 
 #endif

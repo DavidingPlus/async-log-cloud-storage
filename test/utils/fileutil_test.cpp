@@ -36,7 +36,7 @@ namespace
             // 用创建目录的结果确认名称没有被占用，允许多个测试进程同时运行。
             for (int attempt = 0; attempt < 100; ++attempt)
             {
-                const auto candidate = parent / ("dlog-file-util-tests-" + std::to_string(stamp) + "-" + std::to_string(attempt));
+                const auto candidate = parent / ("async-log-cloud-storage-file-util-tests-" + std::to_string(stamp) + "-" + std::to_string(attempt));
                 std::error_code error;
                 if (fs::create_directory(candidate, error))
                 {

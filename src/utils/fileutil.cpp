@@ -8,7 +8,7 @@
 #include <bundle.h>
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
 
 
 uintmax_t FileUtil::fileSize() const
@@ -110,4 +110,4 @@ std::string FileUtil::UnCompress(std::string_view content)
 }
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_END
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_END

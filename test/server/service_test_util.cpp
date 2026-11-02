@@ -75,7 +75,7 @@ namespace service_test
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
         for (int attempt = 0; attempt < 100; ++attempt)
         {
-            const auto candidate = fs::temp_directory_path() / ("dlog-service-tests-" + std::to_string(stamp) + "-" + std::to_string(attempt));
+            const auto candidate = fs::temp_directory_path() / ("async-log-cloud-storage-service-tests-" + std::to_string(stamp) + "-" + std::to_string(attempt));
             std::error_code error;
             if (fs::create_directory(candidate, error))
             {

@@ -1,12 +1,12 @@
-# dlog-cloud-storage
+# async-log-cloud-storage
 
 基于 C++17 的轻量级云存储系统，计划集成 dlog 异步日志库，支持 Web 文件上传下载、普通存储和压缩存储。
 
 ## 内部模块构建
 
-`dlog-cloud-storage-utils-static` 编译 `src/utils/` 下的通用工具，支持 Windows 和 Linux。Linux 下另有 `dlog-cloud-storage-server-static`，编译 `src/server/` 下除 `main.cpp` 外的服务端实现，并依赖工具静态库。服务端可执行目标只编译 `src/server/main.cpp`，链接服务端静态库。
+`async-log-cloud-storage-utils-static` 编译 `src/utils/` 下的通用工具，支持 Windows 和 Linux。Linux 下另有 `async-log-cloud-storage-server-static`，编译 `src/server/` 下除 `main.cpp` 外的服务端实现，并依赖工具静态库。服务端可执行目标只编译 `src/server/main.cpp`，链接服务端静态库。
 
-Linux 单元测试复用服务端静态库，其他平台的测试依赖工具静态库。开发示例按需通过 `add_deps("dlog-cloud-storage-utils-static")` 或 Linux 下的 `add_deps("dlog-cloud-storage-server-static")` 引入模块，无需再次添加模块的 `.cpp` 文件；目前只使用工具函数的 `ServerUtilsTest` 仍依赖工具静态库。同一平台、架构和构建配置下，各目标复用这些静态库的编译结果，并分别链接为可执行程序。
+Linux 单元测试复用服务端静态库，其他平台的测试依赖工具静态库。开发示例按需通过 `add_deps("async-log-cloud-storage-utils-static")` 或 Linux 下的 `add_deps("async-log-cloud-storage-server-static")` 引入模块，无需再次添加模块的 `.cpp` 文件；目前只使用工具函数的 `ServerUtilsTest` 仍依赖工具静态库。同一平台、架构和构建配置下，各目标复用这些静态库的编译结果，并分别链接为可执行程序。
 
 两个内部静态库仅用于项目构建，不单独安装或打包。发布服务端时，所需内部实现静态链接到可执行程序中，实际需要的第三方动态库随程序一起打包。
 
@@ -15,8 +15,8 @@ Linux 单元测试复用服务端静态库，其他平台的测试依赖工具�
 ## 启动服务（Linux）
 
 ```bash
-xmake build -y dlog-cloud-storage-server
-xmake run dlog-cloud-storage-server
+xmake build -y async-log-cloud-storage-server
+xmake run async-log-cloud-storage-server
 ```
 
 默认访问 `http://127.0.0.1:8081/`。首次启动自动创建配置中的存储目录和元数据父目录，仅在元数据文件缺失时写入 `[]`；已有元数据读取或解析失败时报告错误并以非零状态退出，不重置历史数据。配置及其相对数据路径均以可执行文件所在目录为基准。
@@ -81,15 +81,15 @@ xmake pack
 
 `xmake pack` 会自动编译服务端，并收集配置文件和实际需要的第三方动态库，无需先执行 `xmake install`。发布包不包含内部静态库、测试和开发示例。
 
-默认输出到 `build/xpack/dlog-cloud-storage-server/`，文件名包含平台、架构、构建模式和版本，例如：
+默认输出到 `build/xpack/async-log-cloud-storage-server/`，文件名包含平台、架构、构建模式和版本，例如：
 
 ```text
-dlog-cloud-storage-server-linux-x86_64-release-v0.0.0.tar.gz
+async-log-cloud-storage-server-linux-x86_64-release-v0.0.0.tar.gz
 ```
 
-解压后，进入 `bin/` 目录，按需修改其中的 `config/server.conf`，再执行 `./dlog-cloud-storage-server`。第三方动态库位于 `lib/`，程序通过相对自身位置的 RPATH 查找它们，可以整体移动解压目录。没有实际使用第三方动态库时，发布包可能只有 `bin/`。
+解压后，进入 `bin/` 目录，按需修改其中的 `config/server.conf`，再执行 `./async-log-cloud-storage-server`。第三方动态库位于 `lib/`，程序通过相对自身位置的 RPATH 查找它们，可以整体移动解压目录。没有实际使用第三方动态库时，发布包可能只有 `bin/`。
 
-`$ORIGIN/../lib` 在链接阶段直接写入程序，并使用 RPATH 支持间接动态库依赖；安装和打包阶段保留该设置，不需要额外的 ELF 修改工具。开发时使用 `xmake run dlog-cloud-storage-server`，由 XMake 提供依赖包的运行环境。修改 `src/server/config/server.conf` 或 `src/server/web/template.html` 后，执行 `xmake config`，配置阶段会将文件同步到可执行文件目录下的 `config/server.conf`、`web/template.html`，无需先编译服务端。
+`$ORIGIN/../lib` 在链接阶段直接写入程序，并使用 RPATH 支持间接动态库依赖；安装和打包阶段保留该设置，不需要额外的 ELF 修改工具。开发时使用 `xmake run async-log-cloud-storage-server`，由 XMake 提供依赖包的运行环境。修改 `src/server/config/server.conf` 或 `src/server/web/template.html` 后，执行 `xmake config`，配置阶段会将文件同步到可执行文件目录下的 `config/server.conf`、`web/template.html`，无需先编译服务端。
 
 系统基础库（如 glibc）由目标系统提供，发布环境仍需匹配 CPU 架构和系统运行库版本。
 

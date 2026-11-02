@@ -42,9 +42,9 @@ target("tests")
     add_packages("gtest")
     add_packages("bundle", "cpp-base64", "jsoncpp", "libevent", "utfcpp")
 
-    add_deps("dlog-cloud-storage-utils-static")
+    add_deps("async-log-cloud-storage-utils-static")
     if is_plat("linux") then
-        add_deps("dlog-cloud-storage-server-static")
+        add_deps("async-log-cloud-storage-server-static")
 
         -- 服务端测试同步运行配置和页面，资源布局与服务端程序保持一致。
         on_config(function (target)
@@ -88,12 +88,12 @@ if is_plat("linux") then
         set_default(false)
         set_kind("phony")
         on_install(function () end)
-        add_deps("dlog-cloud-storage-server")
+        add_deps("async-log-cloud-storage-server")
 
         on_config(function (target)
             target:add("tests", "startup", {runargs = {
                 path.join(os.projectdir(), "test/server/startup_test.js"),
-                path.absolute(target:dep("dlog-cloud-storage-server"):targetfile())
+                path.absolute(target:dep("async-log-cloud-storage-server"):targetfile())
             }})
             target:add("tests", "upload", {runargs = {
                 path.join(os.projectdir(), "test/server/upload_test.js")

@@ -1,5 +1,5 @@
-#ifndef _DLOG_CLOUD_STORAGE_UTILS_FILEUTIL_H_
-#define _DLOG_CLOUD_STORAGE_UTILS_FILEUTIL_H_
+#ifndef _ASYNC_LOG_CLOUD_STORAGE_UTILS_FILEUTIL_H_
+#define _ASYNC_LOG_CLOUD_STORAGE_UTILS_FILEUTIL_H_
 
 #include "globalmacros.h"
 
@@ -12,7 +12,7 @@
 #include <vector>
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
 
 
 // 文件工具类，使用 std::filesystem 和标准文件流实现。
@@ -78,7 +78,7 @@ private:
 };
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_END
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_END
 
 
 #endif

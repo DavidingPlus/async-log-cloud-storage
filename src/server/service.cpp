@@ -26,7 +26,7 @@
 #include <utf8.h>
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_BEGIN(server)
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_BEGIN(server)
 
 
 namespace
@@ -688,4 +688,4 @@ std::string Service::GetETag(const FileMetadata &info)
 }
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_END
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_END

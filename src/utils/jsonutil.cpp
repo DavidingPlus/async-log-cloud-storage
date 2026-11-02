@@ -4,7 +4,7 @@
 #include <stdexcept>
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
 
 
 std::string JsonUtil::Serialize(const Json::Value &value)
@@ -31,4 +31,4 @@ Json::Value JsonUtil::UnSerialize(std::string_view content)
 }
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_END
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_END

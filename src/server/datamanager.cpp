@@ -9,7 +9,7 @@
 #include <system_error>
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_BEGIN(server)
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_BEGIN(server)
 
 
 FileMetadata FileMetadata::FromFile(const std::filesystem::path &filePath)
@@ -198,4 +198,4 @@ void DataManager::insertWithoutPersistUnlocked(const FileMetadata &info)
 }
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_END
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_END

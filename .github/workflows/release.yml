@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  APP_NAME: dlog-cloud-storage
+  APP_NAME: async-log-cloud-storage
 
 jobs:
   build:

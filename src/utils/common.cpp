@@ -3,17 +3,17 @@
 #include <stdexcept>
 #include <system_error>
 
-#ifdef DLOG_CLOUD_STORAGE_OS_WIN32
+#ifdef ASYNC_LOG_CLOUD_STORAGE_OS_WIN32
 #include <windows.h>
 #endif
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_BEGIN(utils)
 
 
 std::filesystem::path executableFullPath()
 {
-#ifdef DLOG_CLOUD_STORAGE_OS_WIN32
+#ifdef ASYNC_LOG_CLOUD_STORAGE_OS_WIN32
 
     // 使用宽字符支持中文路径，固定缓冲区覆盖 Windows 的长路径长度范围。
     constexpr const DWORD kMaxPathLength = 32768;
@@ -29,7 +29,7 @@ std::filesystem::path executableFullPath()
 
     return std::filesystem::path(buffer, buffer + length);
 
-#elif defined DLOG_CLOUD_STORAGE_OS_LINUX
+#elif defined ASYNC_LOG_CLOUD_STORAGE_OS_LINUX
 
     // /proc/self/exe 指向当前进程实际执行的文件，标准库负责读取完整的链接目标。
     return std::filesystem::read_symlink("/proc/self/exe");
@@ -156,4 +156,4 @@ std::string escapeHtmlText(const std::string &text)
 }
 
 
-DLOG_CLOUD_STORAGE_NAMESPACE_END
+ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_END

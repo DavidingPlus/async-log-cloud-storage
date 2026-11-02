@@ -1,8 +1,8 @@
-# dlog-cloud-storage 开发计划
+# async-log-cloud-storage 开发计划
 
 ## 1. 项目定位与第一版目标
 
-`dlog-cloud-storage` 是基于 C++17 的轻量级云存储系统，使用 XMake 构建，集成 dlog 异步日志库，计划支持 Web 文件上传下载、普通存储和压缩存储。
+`async-log-cloud-storage` 是基于 C++17 的轻量级云存储系统，使用 XMake 构建，集成 dlog 异步日志库，计划支持 Web 文件上传下载、普通存储和压缩存储。
 
 普通与压缩存储的 Service 主路径、应用入口与首次启动、16 MiB 原始文件大小上限及单区间断点下载已实现。当前优先补齐 dlog 接入与退出刷新，以及应用整体验收；分块上传与单次请求上限列为后续功能。
 
@@ -14,9 +14,9 @@
 
 | 构建目标 | 职责 |
 | --- | --- |
-| `dlog-cloud-storage-utils-static` | 内部工具静态库，编译 `src/utils/`，供 Windows、Linux 的单元测试和开发示例共用 |
-| `dlog-cloud-storage-server-static` | Linux 服务端内部静态库，编译 `src/server/` 下除 `main.cpp` 外的源码，并依赖工具静态库 |
-| `dlog-cloud-storage-server` | Linux 服务端可执行程序，编译 `src/server/main.cpp` 并链接服务端静态库 |
+| `async-log-cloud-storage-utils-static` | 内部工具静态库，编译 `src/utils/`，供 Windows、Linux 的单元测试和开发示例共用 |
+| `async-log-cloud-storage-server-static` | Linux 服务端内部静态库，编译 `src/server/` 下除 `main.cpp` 外的源码，并依赖工具静态库 |
+| `async-log-cloud-storage-server` | Linux 服务端可执行程序，编译 `src/server/main.cpp` 并链接服务端静态库 |
 | `tests` | 沿用现有 GoogleTest 分组，Linux 下链接服务端静态库测试业务代码 |
 
 内部静态库只参与项目构建，不安装到应用发布目录。对外发布可执行程序及其运行资源，公共头文件导出和 xmake-repo 库分发流程仍然不需要。
@@ -317,8 +317,8 @@ libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已
 在项目根目录使用现有目标构建、运行；启用 GoogleTest 后运行对应测试分组：
 
 ```bash
-rtk xmake build -y dlog-cloud-storage-server
-rtk xmake run dlog-cloud-storage-server
+rtk xmake build -y async-log-cloud-storage-server
+rtk xmake run async-log-cloud-storage-server
 rtk xmake test -y tests/server
 ```
 
@@ -402,7 +402,7 @@ dlog 的 `DLOG_FATAL()` 在输出后调用刷新回调，再终止进程；默�
 
 ## 8. 当前状态与下一步
 
-当前仓库采用“通用工具静态库 + Linux 服务端静态库 + 服务端可执行程序 + 单元测试”的 XMake 应用工程，服务端主目标为 `dlog-cloud-storage-server`。已有 Linux 安装与打包流程，通用工具、服务端配置和元数据管理已有实现与单元测试。
+当前仓库采用“通用工具静态库 + Linux 服务端静态库 + 服务端可执行程序 + 单元测试”的 XMake 应用工程，服务端主目标为 `async-log-cloud-storage-server`。已有 Linux 安装与打包流程，通用工具、服务端配置和元数据管理已有实现与单元测试。
 
 当前包依赖包括 libevent、bundle、JsonCpp、cpp-base64 和 UTF8-CPP。`Service` 已具备上传、列表页面和完整文件下载，两种存储策略通过真实 HTTP 测试；`src/server/main.cpp` 已接入首次启动准备和服务运行，正式程序的启动与重启恢复已有隔离测试。dlog 接入及浏览器整体验收待完成。
 

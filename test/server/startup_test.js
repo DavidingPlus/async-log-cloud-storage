@@ -13,7 +13,7 @@ const resources = path.join(__dirname, '../../src/server');
 
 
 async function fixture(t) {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dlog-startup-tests-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'async-log-cloud-storage-startup-tests-'));
     const processes = [];
     t.after(async () => {
         for (const job of processes) {
