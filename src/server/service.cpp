@@ -64,30 +64,34 @@ namespace
     }
 
     // 返回 200（忽略区间）、206（有效区间）或 416（区间不可满足）；offset/length 供读取原文字节。
-    int parseByteRange(std::string_view value, size_t size, size_t &offset, size_t &length)
+    int parseRangeHeader(std::string_view rangeHeader, size_t size, size_t &offset, size_t &length)
     {
-        const auto begin = value.find_first_not_of(" \t");
-        if (begin == std::string_view::npos || size == 0) return HTTP_OK;
-        value = value.substr(begin, value.find_last_not_of(" \t") - begin + 1);
-        if (value.size() < 6 || evutil_ascii_strncasecmp(value.data(), "bytes=", 6) != 0) return HTTP_OK;
-        value.remove_prefix(6);
-        const auto dash = value.find('-');
-        if (dash == std::string_view::npos) return HTTP_OK;
 
-        const auto number = [](std::string_view text, size_t &result)
+        size_t begin = rangeHeader.find_first_not_of(" \t");
+        if (std::string_view::npos == begin || 0 == size) return HTTP_OK;
+        rangeHeader = rangeHeader.substr(begin, rangeHeader.find_last_not_of(" \t") - begin + 1);
+
+        if (rangeHeader.size() < 6 || 0 != evutil_ascii_strncasecmp(rangeHeader.data(), "bytes=", 6)) return HTTP_OK;
+        rangeHeader.remove_prefix(6);
+        size_t dash = rangeHeader.find('-');
+        if (std::string_view::npos == dash) return HTTP_OK;
+
+        auto number = [](std::string_view text, size_t &result)
         {
             if (text.empty()) return false;
-            const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
-            return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+            auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
+            return std::errc{} == parsed.ec && text.data() + text.size() == parsed.ptr;
         };
-        const auto first = value.substr(0, dash);
-        const auto last = value.substr(dash + 1);
+
+        auto first = rangeHeader.substr(0, dash), last = rangeHeader.substr(dash + 1);
         size_t start = 0, end = 0;
+
         // shortcut: 第一版只处理单区间，多区间及无法解析的数值回退完整 200，按需增加 multipart 支持。
         if (first.empty())
         {
             if (!number(last, end)) return HTTP_OK;
-            if (end == 0) return 416;
+            if (0 == end) return 416;
+
             length = std::min(end, size);
             offset = size - length;
         }
@@ -96,9 +100,11 @@ namespace
             if (!number(first, start)) return HTTP_OK;
             if (!last.empty() && (!number(last, end) || end < start)) return HTTP_OK;
             if (start >= size) return 416;
+
             offset = start;
             length = last.empty() ? size - offset : std::min(end, size - 1) - offset + 1;
         }
+
         return 206;
     }
 
@@ -501,7 +507,7 @@ void Service::Download(evhttp_request *req, void *arg)
         const char *rangeHeader = evhttp_find_header(inputHeaders, "Range");
         const char *ifRangeHeader = evhttp_find_header(inputHeaders, "If-Range");
         // shortcut: 仅匹配现有强 ETag；日期、弱标签或版本不匹配均回退完整 200，按需补充日期校验。
-        if (ifRangeHeader && ifRangeHeader != etag) rangeHeader = nullptr;
+        bool useRange = rangeHeader && (!ifRangeHeader || ifRangeHeader == etag);
 
         // TODO 下载发送优化。评估 evbuffer_add_file() 文件/区间发送；压缩文件可参考独立解压临时文件中转，明确描述符所有权及临时文件清理时机。
         bool compressed = storageType == StorageType::Compressed;
@@ -511,7 +517,7 @@ void Service::Download(evhttp_request *req, void *arg)
 
         size_t total = compressed ? content.size() : file.fileSize(), offset = 0, length = total;
 
-        int status = rangeHeader ? parseByteRange(rangeHeader, total, offset, length) : HTTP_OK;
+        int status = useRange ? parseRangeHeader(rangeHeader, total, offset, length) : HTTP_OK;
         if (416 == status)
         {
             auto contentRange = "bytes */" + std::to_string(total);
