@@ -451,6 +451,7 @@ void Service::Download(evhttp_request *req, void *arg)
         }
 
         // 5. 先读取磁盘上实际保存的字节，若是压缩存储，在内存中解压为原始内容。
+        // TODO 下载发送优化。评估 evbuffer_add_file() 文件/区间发送；压缩文件可参考独立解压临时文件中转，明确描述符所有权及临时文件清理时机。
         auto content = file.getContent();
         if (StorageType::Compressed == storageType) content = utils::FileUtil::UnCompress(content);
 
