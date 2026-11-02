@@ -82,14 +82,19 @@ target("tests")
 target_end()
 
 
--- 页面脚本使用 Node.js 内置测试模块，随 xmake test 一起执行。
+-- 应用启动和页面脚本使用 Node.js 内置测试模块，随 xmake test 一起执行。
 if is_plat("linux") then
     target("tests-js")
         set_default(false)
         set_kind("phony")
         on_install(function () end)
+        add_deps("dlog-cloud-storage-server")
 
         on_config(function (target)
+            target:add("tests", "startup", {runargs = {
+                path.join(os.projectdir(), "test/server/startup_test.js"),
+                path.absolute(target:dep("dlog-cloud-storage-server"):targetfile())
+            }})
             target:add("tests", "upload", {runargs = {
                 path.join(os.projectdir(), "test/server/upload_test.js")
             }})
