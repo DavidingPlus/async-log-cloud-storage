@@ -99,7 +99,7 @@ Content-Length: 6
 
 ## 本项目中的职责与生成规则
 
-`Service::GetETag(const FileMetadata &info)` 已实现标签生成，返回带双引号的 `"文件名-文件大小-修改时间"`。`Download()` 已将标签写入响应头，并返回完整原始文件内容；Range/If-Range 断点续传已列入功能 TODO，If-None-Match 等缓存条件仍属于可选增强。
+`Service::GetETag(const FileMetadata &info)` 返回带双引号的 `"文件名-文件大小-修改时间"`。`Download()` 已支持单区间 Range 和强 ETag 的 If-Range，返回实际片段、206 和 `Content-Range`；完整下载返回 200，并声明 `Accept-Ranges: bytes`。If-None-Match 等缓存条件仍属于可选增强。
 
 本项目确定沿用参考实现，以“文件名-文件大小-修改时间”生成自定义 ETag。在文件由本服务管理、内容更新会反映到文件大小或修改时间的约束下，按强 ETag 使用。生成时使用以下元数据：[参考 GetETag 实现](https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/src/server/Service.hpp)
 
@@ -117,4 +117,6 @@ Content-Length: 6
 - 本方案依赖受控的文件更新流程：内容改变时，文件大小或修改时间必须随之变化，并同步刷新元数据。直接修改内容后保留原有大小和修改时间，会破坏强校验约定。
 - 本项目下载返回原始内容，压缩文件的 `m_fileSize` 则记录存储大小；更新存储文件后，需要同步刷新参与标签生成的元数据。
 
-当前仍按[项目计划的断点下载说明](plan.md#断点下载)返回完整文件，不支持外部进程修改数据文件或元数据。后续按 TODO 接入 Range/If-Range 断点续传，缓存条件处理仍按需选择；`GetETag()` 本身仅生成版本标识。
+当前支持 `bytes=start-end`、`bytes=start-` 和 `bytes=-suffix`，结束位置超出原文时截到末尾；有效但不可满足的区间返回 416 和 `Content-Range: bytes */总大小`。多区间、未知单位、格式错误、数字溢出及空文件均忽略 Range，返回完整 200；If-Range 缺失时直接处理区间，仅存在匹配的强 ETag 时应用版本条件，日期、弱标签或版本不匹配均回退完整 200，没有 Range 时忽略 If-Range。
+
+普通文件复用 `getPosLen()` 读取所需区间，压缩文件在内存中解压后按原文字节取区间；不创建解压临时文件，也不支持外部进程修改数据文件或元数据。后续发送优化见[项目计划](plan.md#断点下载)，`GetETag()` 本身仅生成版本标识。

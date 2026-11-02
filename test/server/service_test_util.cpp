@@ -237,6 +237,8 @@ namespace service_test
             if (etag) result.m_response.m_etag = etag;
             const char *acceptRanges = evhttp_find_header(evhttp_request_get_input_headers(req), "Accept-Ranges");
             if (acceptRanges) result.m_response.m_acceptRanges = acceptRanges;
+            const char *contentRange = evhttp_find_header(evhttp_request_get_input_headers(req), "Content-Range");
+            if (contentRange) result.m_response.m_contentRange = contentRange;
             auto *body = evhttp_request_get_input_buffer(req);
             result.m_response.m_body.resize(evbuffer_get_length(body));
             if (!result.m_response.m_body.empty())

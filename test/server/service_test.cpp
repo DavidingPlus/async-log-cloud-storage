@@ -1301,7 +1301,88 @@ TEST_F(ServiceHttpTests, RejectsNonGetDownloadRequests)
     EXPECT_TRUE(Access::data(service).getAll().empty());
 }
 
-TEST_F(ServiceHttpTests, DownloadsCompleteFilesWhileRangeAndCacheConditionsAreDeferred)
+TEST_F(ServiceHttpTests, HandlesSingleByteRangesForBothStorageTypes)
+{
+    server::Service service;
+    LocalHttpServer http(service);
+    const std::vector<RangeCase> cases{
+        {"bytes=2-4", 206, "234", "bytes 2-4/10"},
+        {"bytes=4-", 206, "456789", "bytes 4-9/10"},
+        {"bytes=-3", 206, "789", "bytes 7-9/10"},
+        {"bytes=8-99", 206, "89", "bytes 8-9/10"},
+        {"bytes=0-0", 206, "0", "bytes 0-0/10"},
+        {"bytes=-99", 206, "0123456789", "bytes 0-9/10"},
+        {"BYTES=2-4 \t", 206, "234", "bytes 2-4/10"},
+        {"bytes=10-", 416, "", "bytes */10"},
+        {"bytes=-0", 416, "", "bytes */10"},
+        {"items=0-1", 200, "0123456789", ""},
+        {"bytes=0-1,4-5", 200, "0123456789", ""},
+        {"bytes=", 200, "0123456789", ""},
+        {"bytes=-", 200, "0123456789", ""},
+        {"bytes=4-2", 200, "0123456789", ""},
+        {"bytes=0-2x", 200, "0123456789", ""},
+        {"bytes=999999999999999999999999999999-", 200, "0123456789", ""},
+        {"bytes=0-999999999999999999999999999999", 200, "0123456789", ""},
+        {"bytes=-999999999999999999999999999999", 200, "0123456789", ""}};
+    for (const std::string type : {"uncompressed", "compressed"})
+    {
+        const auto name = type + ".txt";
+        ASSERT_EQ(http.post("/upload", {{"FileName", base64_encode(name)}, {"StorageType", type}}, "0123456789").m_code, 201);
+        for (const auto &item : cases)
+        {
+            SCOPED_TRACE(type + ": " + item.m_header);
+            const auto response = http.get("/download/" + name, {{"Range", item.m_header}});
+            EXPECT_EQ(response.m_code, item.m_status);
+            EXPECT_EQ(response.m_body, item.m_body);
+            EXPECT_EQ(response.m_contentRange, item.m_contentRange);
+            EXPECT_EQ(response.m_contentLength, std::to_string(item.m_body.size()));
+        }
+        const auto emptyName = "empty-" + name;
+        ASSERT_EQ(http.post("/upload", {{"FileName", base64_encode(emptyName)}, {"StorageType", type}}, "").m_code, 201);
+        const auto empty = http.get("/download/" + emptyName, {{"Range", "bytes=0-"}});
+        EXPECT_EQ(empty.m_code, HTTP_OK);
+        EXPECT_TRUE(empty.m_body.empty());
+        EXPECT_TRUE(empty.m_contentRange.empty());
+    }
+}
+
+TEST_F(ServiceHttpTests, ResumesBinaryFilesOnlyWhenIfRangeMatches)
+{
+    server::Service service;
+    LocalHttpServer http(service);
+    const std::string content = std::string("a\0\xffz", 4) + std::string(4096, 'A');
+    for (const std::string type : {"uncompressed", "compressed"})
+    {
+        SCOPED_TRACE(type);
+        const auto name = type + ".bin";
+        ASSERT_EQ(http.post("/upload", {{"FileName", base64_encode(name)}, {"StorageType", type}}, content).m_code, 201);
+        const auto url = "/download/" + name;
+        if (type == "compressed")
+            ASSERT_LT(Access::data(service).getFileMetaDataByRequestPath(url).m_fileSize, content.size());
+        const auto first = http.get(url, {{"Range", "bytes=0-1"}});
+        const auto rest = http.get(url, {{"Range", "bytes=2-"}, {"If-Range", first.m_etag}});
+        EXPECT_EQ(first.m_code, 206);
+        EXPECT_EQ(rest.m_code, 206);
+        EXPECT_EQ(first.m_acceptRanges, "bytes");
+        EXPECT_EQ(first.m_contentRange, "bytes 0-1/4100");
+        EXPECT_EQ(rest.m_contentRange, "bytes 2-4099/4100");
+        EXPECT_EQ(first.m_body + rest.m_body, content);
+        for (const std::string validator : {std::string("\"other\""), "W/" + first.m_etag, std::string("Wed, 21 Oct 2015 07:28:00 GMT")})
+        {
+            // 版本不匹配时先忽略 Range，即使原区间越界也返回完整 200。
+            const auto full = http.get(url, {{"Range", "bytes=99999-"}, {"If-Range", validator}});
+            EXPECT_EQ(full.m_code, HTTP_OK);
+            EXPECT_EQ(full.m_body, content);
+            EXPECT_TRUE(full.m_contentRange.empty());
+        }
+        const auto withoutRange = http.get(url, {{"If-Range", first.m_etag}});
+        EXPECT_EQ(withoutRange.m_code, HTTP_OK);
+        EXPECT_EQ(withoutRange.m_body, content);
+        EXPECT_TRUE(withoutRange.m_contentRange.empty());
+    }
+}
+
+TEST_F(ServiceHttpTests, DownloadsCompleteFilesWhileCacheConditionsAreDeferred)
 {
     server::Service service;
     LocalHttpServer http(service);
@@ -1310,13 +1391,6 @@ TEST_F(ServiceHttpTests, DownloadsCompleteFilesWhileRangeAndCacheConditionsAreDe
     ASSERT_EQ(first.m_code, HTTP_OK);
     ASSERT_FALSE(first.m_etag.empty());
 
-    // Range 尚未实现时仍返回完整 200，不能像参考实现一样仅凭 If-Range 返回假的 206。
-    // TODO 实现断点续传后调整此用例，补充 Range / If-Range 的区间正文、206 和 Content-Range 验证。
-    const auto range = http.get("/download/a.txt", {{"Range", "bytes=2-4"}, {"If-Range", first.m_etag}});
-    EXPECT_EQ(range.m_code, HTTP_OK);
-    EXPECT_EQ(range.m_body, "0123456789");
-    EXPECT_EQ(range.m_contentLength, "10");
-    EXPECT_TRUE(range.m_acceptRanges.empty());
     // 当前不处理缓存条件请求；即使 If-None-Match 匹配，也返回 200 和完整正文。
     const auto cached = http.get("/download/a.txt", {{"If-None-Match", first.m_etag}});
     EXPECT_EQ(cached.m_code, HTTP_OK);

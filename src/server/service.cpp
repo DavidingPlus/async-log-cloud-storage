@@ -5,6 +5,7 @@
 #include "utils/fileutil.h"
 #include "utils/jsonutil.h"
 
+#include <charconv>
 #include <chrono>
 #include <csignal>
 #include <ctime>
@@ -13,12 +14,14 @@
 #include <regex>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 
 #include <base64.h>
 
 #include <event2/buffer.h>
 #include <event2/event.h>
 #include <event2/http.h>
+#include <event2/util.h>
 
 #include <utf8.h>
 
@@ -58,6 +61,45 @@ namespace
 
         // 4. 要求文件名符合 UTF-8 编码。
         return utf8::is_valid(fileName.begin(), fileName.end());
+    }
+
+    // 返回 200（忽略区间）、206（有效区间）或 416（区间不可满足）；offset/length 供读取原文字节。
+    int parseByteRange(std::string_view value, size_t size, size_t &offset, size_t &length)
+    {
+        const auto begin = value.find_first_not_of(" \t");
+        if (begin == std::string_view::npos || size == 0) return HTTP_OK;
+        value = value.substr(begin, value.find_last_not_of(" \t") - begin + 1);
+        if (value.size() < 6 || evutil_ascii_strncasecmp(value.data(), "bytes=", 6) != 0) return HTTP_OK;
+        value.remove_prefix(6);
+        const auto dash = value.find('-');
+        if (dash == std::string_view::npos) return HTTP_OK;
+
+        const auto number = [](std::string_view text, size_t &result)
+        {
+            if (text.empty()) return false;
+            const auto parsed = std::from_chars(text.data(), text.data() + text.size(), result);
+            return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+        };
+        const auto first = value.substr(0, dash);
+        const auto last = value.substr(dash + 1);
+        size_t start = 0, end = 0;
+        // shortcut: 第一版只处理单区间，多区间及无法解析的数值回退完整 200，按需增加 multipart 支持。
+        if (first.empty())
+        {
+            if (!number(last, end)) return HTTP_OK;
+            if (end == 0) return 416;
+            length = std::min(end, size);
+            offset = size - length;
+        }
+        else
+        {
+            if (!number(first, start)) return HTTP_OK;
+            if (!last.empty() && (!number(last, end) || end < start)) return HTTP_OK;
+            if (start >= size) return 416;
+            offset = start;
+            length = last.empty() ? size - offset : std::min(end, size - 1) - offset + 1;
+        }
+        return 206;
     }
 
 }
@@ -384,15 +426,15 @@ void Service::ShowFileList(evhttp_request *req, void *arg)
 
 void Service::Download(evhttp_request *req, void *arg)
 {
-    // 整体流程：解析下载 URL → 查询内存中的元数据 → 读取数据文件 → 按存储策略解压 → 返回原始文件内容。
+    // 整体流程：解析下载 URL → 查询元数据 → 判断版本和区间 → 读取或解压 → 返回原文字节。
     // 上传负责写入数据文件和登记元数据；下载根据已有元数据找到文件，读取后直接响应，不新增元数据记录。
-    // 1. 检查 HTTP 方法，当前完整文件下载只接受 GET。
+    // 1. 检查 HTTP 方法，下载只接受 GET。
     // 2. 提取 URI 路径并进行一次 URL 解码，得到元数据表中的请求路径键。
     // 3. 按已解码的请求路径查询 FileMetadata，取得实际存储路径；记录不存在时返回 404。
     // 4. 根据实际存储目录判断 StorageType，目录无法识别时返回 500；数据文件丢失时返回 404。
-    // 5. 读取磁盘文件；普通存储直接使用原字节，压缩存储在内存中解压，空文件返回空正文。
-    // 6. 设置二进制响应类型、下载文件名及 ETag。
-    // 7. 将完整的原始文件字节写入响应缓冲区，返回 200；读取或解压抛出异常时返回 500。
+    // 5. 取得原文长度，校验 If-Range 并解析 Range；有效但不可满足的区间返回 416。
+    // 6. 普通文件只读取需要的区间；压缩文件在内存中解压后选择区间，设置响应头。
+    // 7. 有效区间返回 206 和实际片段，其余返回完整 200；读取或解压抛出异常时返回 500。
     // 下载过程只读取数据文件，不创建解压临时文件，也不修改内存元数据表或磁盘元数据 JSON。
 
     // 1. 其他方法返回 405，Allow 头说明当前接受 GET。
@@ -450,13 +492,37 @@ void Service::Download(evhttp_request *req, void *arg)
             return;
         }
 
-        // 5. 先读取磁盘上实际保存的字节，若是压缩存储，在内存中解压为原始内容。
+        // TODO Code Review
+
+        // 5. 请求头中，Range 表示请求区间，If-Range 表示校验版本。具体说明见 docs/etag.md。
+        std::string etag = GetETag(info);
+
+        auto inputHeaders = evhttp_request_get_input_headers(req);
+        const char *rangeHeader = evhttp_find_header(inputHeaders, "Range");
+        const char *ifRangeHeader = evhttp_find_header(inputHeaders, "If-Range");
+        // shortcut: 仅匹配现有强 ETag；日期、弱标签或版本不匹配均回退完整 200，按需补充日期校验。
+        if (ifRangeHeader && ifRangeHeader != etag) rangeHeader = nullptr;
+
         // TODO 下载发送优化。评估 evbuffer_add_file() 文件/区间发送；压缩文件可参考独立解压临时文件中转，明确描述符所有权及临时文件清理时机。
-        auto content = file.getContent();
-        if (StorageType::Compressed == storageType) content = utils::FileUtil::UnCompress(content);
+        bool compressed = storageType == StorageType::Compressed;
+
+        std::string content;
+        if (compressed) content = utils::FileUtil::UnCompress(file.getContent());
+
+        size_t total = compressed ? content.size() : file.fileSize(), offset = 0, length = total;
+
+        int status = rangeHeader ? parseByteRange(rangeHeader, total, offset, length) : HTTP_OK;
+        if (416 == status)
+        {
+            auto contentRange = "bytes */" + std::to_string(total);
+            evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Range", contentRange.data());
+            evhttp_send_reply(req, 416, "Range Not Satisfiable", nullptr);
+            return;
+        }
+
+        if (!compressed) content = file.getPosLen(offset, length);
 
         // 6. 设置二进制响应类型、下载文件名及 ETag。
-        auto etag = GetETag(info);
         // Content-Disposition 用于明确浏览器的下载行为和保存文件名，下载主流程本身不依赖此响应头。attachment 建议按附件下载；filename* 指定建议文件名，避免浏览器仅根据请求路径推断名称。UTF-8'' 声明文件名使用 UTF-8，语言标记留空；百分号编码支持中文、空格等字符。例如文件名 "a b.txt" 会生成 "attachment; filename*=UTF-8''a%20b.txt"。
         auto disposition = "attachment; filename*=UTF-8''" + utils::fileNameEncode(filePath.filename().string());
         auto headers = evhttp_request_get_output_headers(req);
@@ -467,13 +533,18 @@ void Service::Download(evhttp_request *req, void *arg)
         evhttp_add_header(headers, "Content-Disposition", disposition.data());
         // 声明正文是通用二进制数据。
         evhttp_add_header(headers, "Content-Type", "application/octet-stream");
+        evhttp_add_header(headers, "Accept-Ranges", "bytes");
+        // Content-Range 描述实际响应区间与原文总大小，仅部分响应需要这个字段。
+        if (206 == status)
+        {
+            auto contentRange = "bytes " + std::to_string(offset) + "-" + std::to_string(offset + length - 1) + "/" + std::to_string(total);
+            evhttp_add_header(headers, "Content-Range", contentRange.data());
+        }
 
         // 7. 按长度发送二进制正文，保留 '\0'；libevent 会根据实际正文生成 Content-Length 响应字段。
-        // TODO 实现 Range / If-Range 断点续传，按实际字节区间返回 206 和 Content-Range，支持后再声明 Accept-Ranges: bytes。
-        // 当前仍统一返回完整正文和 200，不声明区间下载能力。
         auto outputBuf = evhttp_request_get_output_buffer(req);
-        evbuffer_add(outputBuf, content.data(), content.size());
-        evhttp_send_reply(req, HTTP_OK, "OK", nullptr);
+        evbuffer_add(outputBuf, content.data() + (compressed ? offset : 0), length);
+        evhttp_send_reply(req, status, status == 206 ? "Partial Content" : "OK", nullptr);
     }
     catch (const std::exception &)
     {

@@ -144,6 +144,14 @@ namespace service_test
         void expectNormalExit(int signal);
     };
 
+    struct RangeCase
+    {
+        const char *m_header;
+        int m_status;
+        std::string m_body;
+        const char *m_contentRange;
+    };
+
     struct Response
     {
         int m_code = 0;
@@ -153,6 +161,7 @@ namespace service_test
         std::string m_contentDisposition;
         std::string m_etag;
         std::string m_acceptRanges;
+        std::string m_contentRange;
     };
 
     // 同一个真实事件循环驱动 HTTP 服务与客户端，使用系统分配的本地端口和有上限的等待。

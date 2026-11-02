@@ -4,7 +4,7 @@
 
 `dlog-cloud-storage` 是基于 C++17 的轻量级云存储系统，使用 XMake 构建，集成 dlog 异步日志库，计划支持 Web 文件上传下载、普通存储和压缩存储。
 
-普通与压缩存储的 Service 主路径和 16 MiB 原始文件大小上限已实现。当前优先补齐应用入口、dlog 接入与退出刷新，以及应用整体验收；断点续传、分块上传与单次请求上限列为后续功能。
+普通与压缩存储的 Service 主路径、16 MiB 原始文件大小上限及单区间断点下载已实现。当前优先补齐应用入口、dlog 接入与退出刷新，以及应用整体验收；分块上传与单次请求上限列为后续功能。
 
 参考项目为 [Kama-AsynLogSystem-CloudStorage](https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage)。保留 [dlog](https://github.com/DavidingPlus/dlog) 作为独立日志库，云存储项目依赖它，存储业务拥有自己的模块和测试。
 
@@ -198,7 +198,7 @@ enum class StorageType
 | `static GetETag(const FileMetadata &)` | 根据元数据生成 ETag |
 | `static Download(evhttp_request *, void *)` | 按请求路径查找元数据，读取或解压后返回原始字节 |
 
-请求处理函数统一保留参考实现的 `(evhttp_request *, void *)` 参数，不预先拆分实例分发函数或注入 `DataManager`。`run()` 已实现事件循环和 HTTP 服务创建、配置地址与端口监听，以及通用回调注册；注册 `GenericCallback` 时以 `this` 作为上下文。资源以智能指针管理，按 HTTP 服务、事件循环的顺序自动释放；正常结束直接返回，创建事件循环或 HTTP 服务、绑定监听、注册信号或运行事件循环失败时抛出 `std::runtime_error`。SIGINT/SIGTERM 已通过 libevent 信号事件接入，退出循环后自动释放资源并正常返回。文件时间、文件大小、列表 HTML 和 ETag 辅助函数已实现；`GenericCallback()` 已实现请求分发，`ShowFileList()` 已实现页面响应，`Upload()` 已实现直接保存和压缩保存的基础流程，`Download()` 已实现普通文件读取和压缩文件内存解压，返回完整原始内容及 ETag；断点续传已列为功能 TODO，详见第 7 节。
+请求处理函数统一保留参考实现的 `(evhttp_request *, void *)` 参数，不预先拆分实例分发函数或注入 `DataManager`。`run()` 已实现事件循环和 HTTP 服务创建、配置地址与端口监听，以及通用回调注册；注册 `GenericCallback` 时以 `this` 作为上下文。资源以智能指针管理，按 HTTP 服务、事件循环的顺序自动释放；正常结束直接返回，创建事件循环或 HTTP 服务、绑定监听、注册信号或运行事件循环失败时抛出 `std::runtime_error`。SIGINT/SIGTERM 已通过 libevent 信号事件接入，退出循环后自动释放资源并正常返回。文件时间、文件大小、列表 HTML 和 ETag 辅助函数已实现；`GenericCallback()` 已实现请求分发，`ShowFileList()` 已实现页面响应，`Upload()` 已实现直接保存和压缩保存的基础流程，`Download()` 已支持完整或单区间原文下载及强 ETag 的 If-Range 校验，详见第 7 节。
 
 第一版沿用 `ShowFileList()` 直接生成列表页面，不要求拆分独立 `/files` 接口。
 
@@ -274,16 +274,16 @@ libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已
 - 参考未检查元数据查询是否成功；当前查询失败立即返回 404。
 - 参考按路径子串判断存储类型；当前将配置目录与文件名组合为标准化路径，与元数据中的实际文件路径比较后判断 StorageType，兼容配置目录末尾带 `/` 的写法。
 - 参考把解压结果写入普通存储目录，可能覆盖或删除同名文件；当前仅在内存中解压。
-- 参考部分错误响应后没有立即返回，且仅凭 If-Range 就返回 206、未截取 Range；当前错误响应后立即返回，成功统一返回完整 200，也不声明 Accept-Ranges: bytes。
+- 参考部分错误响应后没有立即返回，且仅凭 If-Range 就返回 206、未截取 Range；当前错误响应后立即返回，按实际区间返回 206 和 Content-Range，成功下载声明 Accept-Ranges: bytes，完整下载返回 200。
 
-第一版仍需补齐日志。文件由服务管理，不实现外部修改后的自动同步，文件损坏检测仅作为可选增强；已有读写及解压异常处理保留。Range / If-Range 断点续传已列入功能 TODO；HEAD、缓存条件请求、流式传输及解压过程内存限额仍为可选增强。
+第一版仍需补齐日志。文件由服务管理，不实现外部修改后的自动同步，文件损坏检测仅作为可选增强；已有读写及解压异常处理保留。单区间 Range / If-Range 已实现；HEAD、缓存条件请求、流式传输及解压过程内存限额仍为可选增强。
 
 1. `GET /` 直接渲染文件列表及下载链接，不要求独立 `/files` JSON 接口。
 2. `GET /download/<编码后的文件名>` 根据元数据定位文件，并返回原始二进制内容。
 3. 路径中的名称按 URL 路径规则解码一次，正确保留加号；使用服务端记录的路径查找文件。
 4. 设置合适的响应类型和下载文件名；文件不存在时返回 404。
 
-当前先将文件完整读入内存，压缩文件按实际所属目录判断策略，在内存中解压后返回原始字节，状态为 200。响应设置 `application/octet-stream`、带 UTF-8 百分号编码文件名的 `Content-Disposition` 和 ETag，由 libevent 根据实际响应正文生成 Content-Length。下载不创建解压临时文件，不修改数据文件或元数据。继续保留小文件内存处理方式，不另设下载读取上限。
+普通文件通过 `getPosLen()` 读取所需区间，压缩文件在内存中解压后取原文区间；部分下载返回 206，完整下载返回 200。响应保留 `application/octet-stream`、下载文件名及 ETag，Content-Length 由 libevent 根据实际正文生成。下载不创建解压临时文件，不修改数据文件或元数据，不另设下载读取上限。
 
 验收：下载内容与上传内容逐字节一致；中文、空格、加号文件名的链接可用；未知文件返回 404。
 
@@ -337,9 +337,9 @@ HTTP 上传、列表和下载已有真实请求测试；上述命令用于继续
 
 ## 7. 后续扩展与实施注意事项
 
-断点续传、分块上传与单次请求上限列入后续功能 TODO；其余扩展按实际需求独立实施，不作为最小版本的完成条件。新增能力分别验证对应行为。
+单区间断点续传已实现；分块上传与单次请求上限列入后续功能 TODO，其余扩展按实际需求独立实施，不作为最小版本的完成条件。
 
-- [ ] 断点续传：实现 Range / If-Range 的实际区间响应，详见下方断点下载说明。
+- [x] 单区间断点续传：已实现 Range / If-Range 的实际区间响应，详见下方断点下载说明。
 - [ ] 分块上传与单次请求上限：分块写入临时文件，完整接收后再发布文件和元数据；分别限制最终原始文件总大小和单次请求正文大小，在接收层限制缓冲占用。支持大文件时同步调整整文件压缩和下载的内存处理。
 - 删除、客户端自动同步、多用户。
 - 重要日志备份、FATAL 刷新、等级过滤和积压控制。
@@ -390,11 +390,11 @@ dlog 的 `DLOG_FATAL()` 在输出后调用刷新回调，再终止进程；默�
 
 ### 断点下载
 
-TODO：实现 Range / If-Range 断点续传，补齐区间解析、版本校验、206 与 `Content-Range` 响应以及不可满足范围的处理。实现后再声明 `Accept-Ranges: bytes`。
+已实现单区间 Range / 强 ETag 的 If-Range、实际片段正文、206 与 `Content-Range`，以及不可满足区间的 416；成功下载声明 `Accept-Ranges: bytes`。支持范围、回退规则和基础知识见 [ETag 文档](etag.md#本项目中的职责与生成规则)。
 
 本项目采用“文件名-文件大小-修改时间”生成自定义 ETag。强校验所需的文件更新约束、缓存清理后的处理及基础知识见 [ETag 基础知识](etag.md)。
 
-参考项目的下载逻辑根据 `If-Range` 决定是否返回 `206`，但仍发送完整文件，没有解析 `Range` 并按指定区间发送数据。最小版本提供完整文件下载并返回 `200`。后续实现断点下载时，再补齐区间校验、部分响应、响应头以及不可满足范围的处理；涉及压缩文件时，范围应对应用户下载的原始文件内容。[参考下载实现](https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/src/server/Service.hpp)
+参考实现的 `evbuffer_add_file()` 文件发送及解压临时文件中转仍作为独立优化跟踪，本次不引入临时文件。[参考下载实现](https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/src/server/Service.hpp)
 
 ### 日志积压与并发故障
 
