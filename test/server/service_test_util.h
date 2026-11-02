@@ -138,6 +138,9 @@ namespace service_test
     };
     class ServiceRunTests : public ServiceFixture
     {
+    protected:
+
+        void expectNormalExit(int signal);
     };
 
     struct Response

@@ -6,6 +6,7 @@
 #include "utils/jsonutil.h"
 
 #include <chrono>
+#include <csignal>
 #include <ctime>
 #include <iomanip>
 #include <memory>
@@ -89,7 +90,15 @@ void Service::run()
     // evhttp_set_gencb() 注册通用请求回调（generic callback），由 libevent 收到请求后调用 GenericCallback；this 作为上下文传给 arg 参数。
     evhttp_set_gencb(http.get(), GenericCallback, this);
 
-    // TODO 处理 SIGINT/SIGTERM，停止接收新请求并退出事件循环，由应用完成资源释放和日志刷新。
+    // 信号回调退出循环；随后由智能指针释放 HTTP 服务（关闭监听）和事件循环。
+    auto stop = [](evutil_socket_t, short, void *arg)
+    { event_base_loopbreak(static_cast<event_base *>(arg)); };
+
+    std::unique_ptr<event, decltype(&event_free)> interrupt(evsignal_new(base.get(), SIGINT, stop, base.get()), event_free);
+    std::unique_ptr<event, decltype(&event_free)> terminate(evsignal_new(base.get(), SIGTERM, stop, base.get()), event_free);
+    if (!interrupt || !terminate) throw std::runtime_error("Service::run(): evsignal_new() failed");
+
+    if (0 != event_add(interrupt.get(), nullptr) || 0 != event_add(terminate.get(), nullptr)) throw std::runtime_error("Service::run(): registering shutdown signals failed");
 
     // 阻塞等待事件并执行回调；返回 -1 时抛出异常，0/1 分别表示正常退出或没有待处理事件。
     if (-1 == event_base_dispatch(base.get())) throw std::runtime_error("Service::run(): event_base_dispatch() failed");

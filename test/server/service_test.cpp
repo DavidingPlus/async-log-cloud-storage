@@ -1,5 +1,7 @@
 #include "service_test_util.h"
 
+#include <csignal>
+
 #include <base64.h>
 
 #include <bundle.h>
@@ -1392,4 +1394,14 @@ TEST_F(ServiceRunTests, RepeatedBindFailuresDoNotLeakEventLoopDescriptors)
         EXPECT_THROW(service.run(), std::runtime_error);
         EXPECT_EQ(descriptorCount(), before);
     }
+}
+
+TEST_F(ServiceRunTests, StopsNormallyOnSigint)
+{
+    expectNormalExit(SIGINT);
+}
+
+TEST_F(ServiceRunTests, StopsNormallyOnSigterm)
+{
+    expectNormalExit(SIGTERM);
 }

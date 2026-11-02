@@ -1,5 +1,10 @@
 #include "service_test_util.h"
 
+#include <csignal>
+#include <thread>
+
+#include <unistd.h>
+
 
 namespace service_test
 {
@@ -157,6 +162,44 @@ namespace service_test
         size_t count = 0;
         for (size_t pos = 0; std::string::npos != (pos = text.find(needle, pos)); pos += needle.size()) ++count;
         return count;
+    }
+
+    void ServiceRunTests::expectNormalExit(int signal)
+    {
+        GTEST_FLAG_SET(death_test_style, "threadsafe");
+        ASSERT_EXIT(
+            {
+                // 在隔离进程中测试信号，并限制等待时间，避免停止失效时卡住测试。
+                ::alarm(5);
+                m_config["server_ip"] = "127.0.0.1";
+                {
+                    server::Service placeholder;
+                    LocalHttpServer http(placeholder);
+                    m_config["server_port"] = http.port();
+                }
+                applyConfig();
+                struct sigaction original
+                {
+                };
+                ASSERT_EQ(::sigaction(signal, nullptr, &original), 0);
+                auto sender = std::async(std::launch::async, [signal, original]
+                                         {
+                    // 等信号处理器安装后再发送，避免依赖固定延时。
+                    for (int attempt = 0; attempt < 300; ++attempt)
+                    {
+                        struct sigaction current{};
+                        if (0 == ::sigaction(signal, nullptr, &current) && current.sa_handler != original.sa_handler)
+                            return 0 == ::kill(::getpid(), signal);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    }
+                    return false; });
+                server::Service service;
+                ASSERT_NO_THROW(service.run());
+                EXPECT_TRUE(sender.get());
+                fs::remove_all(m_directory);
+                std::_Exit(::testing::Test::HasFailure() ? EXIT_FAILURE : EXIT_SUCCESS);
+            },
+            ::testing::ExitedWithCode(EXIT_SUCCESS), "");
     }
 
     LocalHttpServer::LocalHttpServer(server::Service &service)
