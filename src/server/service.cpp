@@ -63,19 +63,26 @@ namespace
         return utf8::is_valid(fileName.begin(), fileName.end());
     }
 
-    // 返回 200（忽略区间）、206（有效区间）或 416（区间不可满足）；offset/length 供读取原文字节。
+    // 解析 Range 请求头的值，结合原文大小确定下载区间，供 Download() 决定响应状态及读取范围。
     int parseRangeHeader(std::string_view rangeHeader, size_t size, size_t &offset, size_t &length)
     {
+        // 整体流程：去掉两端空白 → 检查单位和分隔符 → 解析数字 → 判断区间能否满足 → 计算起点和长度。
+        // rangeHeader 是 Range 请求头的值；size 是原文总字节数，压缩存储时也按解压后的内容计算。offset、length 是引用输出参数，分别表示从第几个字节开始、读取多少字节；字节位置从 0 开始。
+        // 例如请求头为 Range: bytes=4-9，evhttp_find_header() 取出的 rangeHeader 是 "bytes=4-9"。原文有 10 字节时，该值表示第 4～9 字节，包含两端；解析结果为 offset=4、length=6，返回 206。
+        // 调用方须先设置 offset = 0、length = size。返回 200 时保留原值，用于完整下载；返回 206 时更新为实际区间。返回 416 表示区间不可满足，调用方不读取正文，而是返回 Content-Range: bytes */总大小。
 
+        // 1. 去掉整个值两端的空格和制表符；全为空白或原文为空时忽略 Range，返回完整 200。
         size_t begin = rangeHeader.find_first_not_of(" \t");
         if (std::string_view::npos == begin || 0 == size) return HTTP_OK;
         rangeHeader = rangeHeader.substr(begin, rangeHeader.find_last_not_of(" \t") - begin + 1);
 
+        // 2. 只接受 bytes 单位，前缀比较忽略大小写；移除 bytes= 后，用第一个 '-' 分隔左右两部分。前缀或分隔符不符合格式时回退完整 200。
         if (rangeHeader.size() < 6 || 0 != evutil_ascii_strncasecmp(rangeHeader.data(), "bytes=", 6)) return HTTP_OK;
         rangeHeader.remove_prefix(6);
         size_t dash = rangeHeader.find('-');
         if (std::string_view::npos == dash) return HTTP_OK;
 
+        // 3. 用标准库解析十进制非负整数。ec 检查转换失败和溢出，ptr 检查是否消费了整个字符串，避免接受 2x 等值。
         auto number = [](std::string_view text, size_t &result)
         {
             if (text.empty()) return false;
@@ -86,10 +93,13 @@ namespace
         auto first = rangeHeader.substr(0, dash), last = rangeHeader.substr(dash + 1);
         size_t start = 0, end = 0;
 
-        // shortcut: 第一版只处理单区间，多区间及无法解析的数值回退完整 200，按需增加 multipart 支持。
+        // TODO 第一版只处理单区间，多区间及无法解析的数值回退完整 200，按需增加 multipart 支持。
+
+        // 4. 左侧为空表示后缀区间 bytes=-N，即最后 N 个字节；这里 end 暂存请求的字节数，而非结束位置。
         if (first.empty())
         {
             if (!number(last, end)) return HTTP_OK;
+            // 请求最后 0 字节不可满足；N 超过原文长度时返回全部原文字节，但仍属于有效区间，返回 206。
             if (0 == end) return 416;
 
             length = std::min(end, size);
@@ -97,14 +107,19 @@ namespace
         }
         else
         {
+            // 5. 左侧非空表示 bytes=start-end 或 bytes=start-；起止位置包含两端，右侧为空表示一直读到末尾。
+            // 数字非法或结束位置小于起点时忽略 Range；格式有效但起点不在文件内时返回 416。
             if (!number(first, start)) return HTTP_OK;
             if (!last.empty() && (!number(last, end) || end < start)) return HTTP_OK;
             if (start >= size) return 416;
 
             offset = start;
+            // 显式结束位置最多取 size - 1，长度再加 1 以包含末字节。例如 10 字节文件的 bytes=2-4 得到 offset=2、length=3。
             length = last.empty() ? size - offset : std::min(end, size - 1) - offset + 1;
         }
 
+
+        // 6. 区间可满足，返回 206；Download() 使用 offset/length 读取片段并生成对应的 Content-Range。
         return 206;
     }
 
@@ -209,6 +224,7 @@ void Service::GenericCallback(evhttp_request *req, void *arg) noexcept
     catch (...)
     {
         // TODO 接入日志后记录原始异常；响应只返回通用错误，不暴露内部文件路径等细节。
+
         evhttp_send_reply(req, HTTP_INTERNAL, "Internal Server Error", nullptr);
     }
 }
@@ -498,18 +514,21 @@ void Service::Download(evhttp_request *req, void *arg)
             return;
         }
 
-        // TODO Code Review
-
-        // 5. 请求头中，Range 表示请求区间，If-Range 表示校验版本。具体说明见 docs/etag.md。
+        // 5. 获得响应正文 content。请求头中，Range 表示请求区间，If-Range 表示校验版本。具体说明见 docs/etag.md。
         std::string etag = GetETag(info);
 
         auto inputHeaders = evhttp_request_get_input_headers(req);
         const char *rangeHeader = evhttp_find_header(inputHeaders, "Range");
         const char *ifRangeHeader = evhttp_find_header(inputHeaders, "If-Range");
-        // shortcut: 仅匹配现有强 ETag；日期、弱标签或版本不匹配均回退完整 200，按需补充日期校验。
+
+        // useRange 代表本次请求是否使用 Range 指定的区间进行下载。
+        // 1. 没有 Range：false，完整下载，返回值 200 HTTP_OK。
+        // 2. 有 Range，同时，没有 If-Range 或 ETag 匹配：true，解析区间。
+        // 3. 有 Range，有 If-Range 但 ETag 校验不匹配：false，完整下载，返回值 200 HTTP_OK。
         bool useRange = rangeHeader && (!ifRangeHeader || ifRangeHeader == etag);
 
         // TODO 下载发送优化。评估 evbuffer_add_file() 文件/区间发送；压缩文件可参考独立解压临时文件中转，明确描述符所有权及临时文件清理时机。
+
         bool compressed = storageType == StorageType::Compressed;
 
         std::string content;
@@ -518,6 +537,7 @@ void Service::Download(evhttp_request *req, void *arg)
         size_t total = compressed ? content.size() : file.fileSize(), offset = 0, length = total;
 
         int status = useRange ? parseRangeHeader(rangeHeader, total, offset, length) : HTTP_OK;
+        // 416 表示请求的范围无法满足。
         if (416 == status)
         {
             auto contentRange = "bytes */" + std::to_string(total);
@@ -540,7 +560,7 @@ void Service::Download(evhttp_request *req, void *arg)
         // 声明正文是通用二进制数据。
         evhttp_add_header(headers, "Content-Type", "application/octet-stream");
         evhttp_add_header(headers, "Accept-Ranges", "bytes");
-        // Content-Range 描述实际响应区间与原文总大小，仅部分响应需要这个字段。
+        // 206 表示返回部分内容。Content-Range 描述实际响应区间与原文总大小，仅部分响应需要这个字段。
         if (206 == status)
         {
             auto contentRange = "bytes " + std::to_string(offset) + "-" + std::to_string(offset + length - 1) + "/" + std::to_string(total);
@@ -555,6 +575,7 @@ void Service::Download(evhttp_request *req, void *arg)
     catch (const std::exception &)
     {
         // TODO 接入日志后记录读取或解压异常。
+
         evhttp_send_reply(req, HTTP_INTERNAL, "Download failed", nullptr);
     }
 }
