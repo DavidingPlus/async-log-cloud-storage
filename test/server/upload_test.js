@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const templatePath = path.join(__dirname, '../../../src/server/web/template.html');
+const templatePath = path.join(__dirname, '../../src/server/web/template.html');
 const template = fs.readFileSync(templatePath, 'utf8');
 const script = [...template.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(match => match[1]).join('\n');
 

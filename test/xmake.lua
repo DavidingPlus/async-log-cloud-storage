@@ -82,19 +82,23 @@ target("tests")
 target_end()
 
 
--- 页面脚本使用 Node.js 内置测试模块，作为独立测试项随 xmake test 一起执行。
+-- 页面脚本使用 Node.js 内置测试模块，随 xmake test 一起执行。
 if is_plat("linux") then
-    target("tests-server-web")
+    target("tests-js")
         set_default(false)
         set_kind("phony")
         on_install(function () end)
 
-        add_tests("upload")
-        on_test(function ()
+        on_config(function (target)
+            target:add("tests", "upload", {runargs = {
+                path.join(os.projectdir(), "test/server/upload_test.js")
+            }})
+        end)
+        on_test(function (_, opt)
             import("lib.detect.find_tool")
             local node = find_tool("node")
-            assert(node, "Node.js is required to run tests-server-web/upload")
-            os.vrunv(node.program, {path.join(os.projectdir(), "test/server/web/upload_test.js")})
+            assert(node, "Node.js is required to run " .. opt.name)
+            os.vrunv(node.program, opt.runargs)
             return true
         end)
     target_end()

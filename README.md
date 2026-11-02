@@ -24,13 +24,13 @@ xmake test
 Linux 下，`xmake test` 也会执行页面上传脚本测试，需要安装 Node.js，无需第三方包。可以单独运行该测试项：
 
 ```bash
-rtk xmake test -y tests-server-web/upload
+rtk xmake test -y tests-js/upload
 ```
 
 也可直接执行脚本：
 
 ```bash
-rtk node test/server/web/upload_test.js
+rtk node test/server/upload_test.js
 ```
 
 该测试直接执行真实模板中的上传脚本，模拟 DOM 与 fetch，覆盖 IP、localhost、域名和 HTTPS 代理页面地址下的同源上传，以及普通、压缩两种策略。服务端 HTTP 测试同时覆盖不同 Host 下的上传、列表和下载；这些自动化测试不替代实际浏览器及反向代理联调。页面使用 `/upload` 相对地址，反向代理需将上传和下载路径转发到同一个服务。
