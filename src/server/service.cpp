@@ -285,7 +285,7 @@ void Service::Upload(evhttp_request *req, void *arg)
         }
 
         // 6. 通过前面的检查后，再分配内存并复制正文，保留二进制内容中的 '\0'。
-        // TODO 在 HTTP 接收层和这里分配内存前统一限制上传大小。
+        // TODO 按统一的小文件大小策略，在 HTTP 接收层和这里分配内存前限制正文长度。
 
         // 取得请求正文缓冲区。
         auto inputBuf = evhttp_request_get_input_buffer(req);
@@ -444,8 +444,7 @@ void Service::Download(evhttp_request *req, void *arg)
         }
 
         // 5. 先读取磁盘上实际保存的字节，若是压缩存储，在内存中解压为原始内容。
-        // TODO 在完整读取磁盘内容前检查存储大小上限。
-        // TODO 识别明显截断和解压失败，保留合法空文件语义；优先级低于应用运行闭环。
+        // TODO 按统一的小文件大小策略，在完整读取前检查存储大小，压缩存储考虑编码开销。
         auto content = file.getContent();
         if (StorageType::Compressed == storageType) content = utils::FileUtil::UnCompress(content);
 
