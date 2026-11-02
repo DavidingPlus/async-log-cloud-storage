@@ -4,7 +4,7 @@
 
 `dlog-cloud-storage` 是基于 C++17 的轻量级云存储系统，使用 XMake 构建，集成 dlog 异步日志库，计划支持 Web 文件上传下载、普通存储和压缩存储。
 
-普通与压缩存储的 Service 主路径、16 MiB 原始文件大小上限及单区间断点下载已实现。当前优先补齐应用入口、dlog 接入与退出刷新，以及应用整体验收；分块上传与单次请求上限列为后续功能。
+普通与压缩存储的 Service 主路径、应用入口与首次启动、16 MiB 原始文件大小上限及单区间断点下载已实现。当前优先补齐 dlog 接入与退出刷新，以及应用整体验收；分块上传与单次请求上限列为后续功能。
 
 参考项目为 [Kama-AsynLogSystem-CloudStorage](https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage)。保留 [dlog](https://github.com/DavidingPlus/dlog) 作为独立日志库，云存储项目依赖它，存储业务拥有自己的模块和测试。
 
@@ -206,7 +206,7 @@ enum class StorageType
 
 `GenericCallback()` 当前按参考流程提取 URI 路径并进行 URL 解码，再依次判断：路径以配置下载前缀开头时调用 `Download()`，路径等于 `/upload` 时调用 `Upload()`，路径等于 `/` 时调用 `ShowFileList()`，其余返回 404。通用回调声明为 `noexcept`，URI 或路径指针缺失时返回 400；仅将路径解码的 `std::invalid_argument` 转为 400，其他未处理的业务异常由最外层 `catch (...)` 转为 500，避免异常逸出事件循环。真实 HTTP 测试验证非法百分号编码、模板缺失、目录占位及读取失败的响应，并在失败后继续请求和恢复资源。`Upload()` 已校验 POST，`Download()` 已校验 GET。下载从请求的原始编码路径重新取值并解码，不对 GenericCallback 的解码结果再次解码。下载路由使用 `find(prefix) == 0` 从路径起始位置匹配，默认及自定义前缀下的未知路径均有回归测试；未增加配置校验或重构路径解析。
 
-启动阶段按“配置与日志 → 数据目录及缺失的元数据文件初始化 → 构造 `Service`（同时构造并加载成员 `DataManager`）→ `Service::run()`”组织。元数据文件必须在构造 `Service` 前准备好，缺失或加载失败会使构造抛出异常；当前 `main()` 尚未接入此启动流程。Service 信号停止已实现，不额外增加类接口；应用入口接入后，需在 `run()` 返回后按第 4 节完成日志关闭和刷新。
+启动阶段的目标顺序是“配置与日志 → 数据目录及缺失的元数据文件初始化 → 构造 `Service`（同时构造并加载成员 `DataManager`）→ `Service::run()`”。当前 `main()` 已完成配置、目录准备、缺失元数据初始化和 Service 启动，仅在元数据路径缺失时写入 `[]`；已有元数据加载失败时输出错误并以非零状态退出，不覆盖历史数据。Service 信号停止已实现，不额外增加类接口；dlog 初始化及 `run()` 返回后的日志关闭和刷新仍按第 4 节接入。
 
 Service 通过 `evsignal_new()` 注册 SIGINT/SIGTERM，回调只调用 `event_base_loopbreak()`；退出循环后由现有智能指针关闭监听并释放资源，不等待所有在途响应发送完成。应用侧仍需接入第 4 节的日志关闭与刷新。
 
@@ -226,7 +226,7 @@ Service 通过 `evsignal_new()` 注册 SIGINT/SIGTERM，回调只调用 `event_b
 
 libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已实现。`GET /` 已返回文件列表页面，未知路径返回 404；SIGINT/SIGTERM 可使 `run()` 正常返回。
 
-剩余工作是在 `main()` 中启动 Service，完成首次启动准备及第 1 步的日志接入；初始化失败时释放已创建的资源。
+`main()` 已接入首次启动准备和 `Service::run()`，异常时输出原因并以非零状态退出；正式程序的启动测试已覆盖首次运行、重启恢复、信号退出和失败时的数据保护。剩余第 1 步的日志接入及实际浏览器验收。
 
 验收：访问 `http://127.0.0.1:8081/` 能获得响应；停止服务后有完整的关闭日志。
 
@@ -404,9 +404,9 @@ dlog 的 `DLOG_FATAL()` 在输出后调用刷新回调，再终止进程；默�
 
 当前仓库采用“通用工具静态库 + Linux 服务端静态库 + 服务端可执行程序 + 单元测试”的 XMake 应用工程，服务端主目标为 `dlog-cloud-storage-server`。已有 Linux 安装与打包流程，通用工具、服务端配置和元数据管理已有实现与单元测试。
 
-当前包依赖包括 libevent、bundle、JsonCpp、cpp-base64 和 UTF8-CPP。`Service` 已具备上传、列表页面和完整文件下载，两种存储策略通过真实 HTTP 测试；`src/server/main.cpp` 目前仍只读取并输出配置，应用启动流程、dlog 接入及浏览器整体验收待完成。
+当前包依赖包括 libevent、bundle、JsonCpp、cpp-base64 和 UTF8-CPP。`Service` 已具备上传、列表页面和完整文件下载，两种存储策略通过真实 HTTP 测试；`src/server/main.cpp` 已接入首次启动准备和服务运行，正式程序的启动与重启恢复已有隔离测试。dlog 接入及浏览器整体验收待完成。
 
-上传采用自定义请求头协议：`FileName` 传递 UTF-8 文件名的 Base64 编码，`StorageType` 使用 `uncompressed`、`compressed`。相关业务、页面同源上传及 16 MiB 原始文件大小上限已实现，应用运行闭环仍待完成。
+上传采用自定义请求头协议：`FileName` 传递 UTF-8 文件名的 Base64 编码，`StorageType` 使用 `uncompressed`、`compressed`。相关业务、页面同源上传及 16 MiB 原始文件大小上限已实现，应用启动及重启恢复测试通过，实际浏览器及反向代理联调仍待完成。
 
-下一步完成应用入口与首次启动、dlog 接入与退出刷新、应用整体验收三项工作，再按第 7 节推进后续功能。原始文件大小上限、元数据持久化失败回滚、上传文件名校验及 Service 信号停止已实现；文件损坏检测与其余增强按实际需求选择。
+下一步完成 dlog 接入与退出刷新、应用整体验收，再按第 7 节推进后续功能。应用入口与首次启动、原始文件大小上限、元数据持久化失败回滚、上传文件名校验及 Service 信号停止已实现；文件损坏检测与其余增强按实际需求选择。
 

@@ -1,6 +1,6 @@
 # dlog-cloud-storage
 
-基于 C++17 的轻量级云存储系统，集成 dlog 异步日志库，支持 Web 文件上传下载、普通存储和压缩存储。
+基于 C++17 的轻量级云存储系统，计划集成 dlog 异步日志库，支持 Web 文件上传下载、普通存储和压缩存储。
 
 ## 内部模块构建
 
@@ -12,6 +12,17 @@ Linux 单元测试复用服务端静态库，其他平台的测试依赖工具�
 
 服务端资源随模块放在 `src/server/` 下：`src/server/config/server.conf` 保存运行配置，`src/server/web/template.html` 保存页面模板。XMake 配置阶段将它们分别同步到服务端和测试程序所在目录下的 `config/server.conf`、`web/template.html`；安装和打包后对应 `bin/config/server.conf`、`bin/web/template.html`。运行时通过可执行文件目录定位资源。
 
+## 启动服务（Linux）
+
+```bash
+xmake build -y dlog-cloud-storage-server
+xmake run dlog-cloud-storage-server
+```
+
+默认访问 `http://127.0.0.1:8081/`。首次启动自动创建配置中的存储目录和元数据父目录，仅在元数据文件缺失时写入 `[]`；已有元数据读取或解析失败时报告错误并以非零状态退出，不重置历史数据。配置及其相对数据路径均以可执行文件所在目录为基准。
+
+使用 Ctrl+C 或 SIGTERM 正常停止，再次启动会加载原元数据。dlog 日志接入与退出刷新仍待完成。
+
 ## 单元测试
 
 `bundle`、`cpp-base64`、`jsoncpp` 和 `libevent` 由 XMake 下载和链接，沿用项目当前构建模式的动态库配置。启用 GoogleTest 后运行：
@@ -21,7 +32,7 @@ xmake f -m debug --with_gtest=yes -y
 xmake test
 ```
 
-Linux 下，`xmake test` 也会执行页面上传脚本测试，需要安装 Node.js，无需第三方包。可以单独运行该测试项：
+Linux 下，`xmake test` 也会执行应用启动及页面上传脚本测试，需要安装 Node.js 18 或更高版本，无需第三方包。可以单独运行页面测试：
 
 ```bash
 rtk xmake test -y tests-js/upload
@@ -34,6 +45,8 @@ rtk node test/server/upload_test.js
 ```
 
 该测试直接执行真实模板中的上传脚本，模拟 DOM 与 fetch，覆盖 IP、localhost、域名和 HTTPS 代理页面地址下的同源上传，以及普通、压缩两种策略。服务端 HTTP 测试同时覆盖不同 Host 下的上传、列表和下载；这些自动化测试不替代实际浏览器及反向代理联调。页面使用 `/upload` 相对地址，反向代理需将上传和下载路径转发到同一个服务。
+
+应用启动测试随 `xmake test` 执行，也可单独运行 `xmake test -y tests-js/startup`；`xmake test -y 'tests-js/*'` 同时执行两组脚本测试。测试使用 Node.js，在临时目录中复制并运行正式服务端程序，覆盖首次启动、跨工作目录的资源定位、两种存储的上传与重启恢复、SIGINT/SIGTERM 正常退出，以及损坏元数据、端口占用和目录创建失败时的错误退出；不修改构建目录中的运行配置和数据。
 
 通用工具位于 `src/utils/`，使用 `utils` 命名空间，构建为各平台共用的内部静态库。对应测试按源码拆分为 `test/utils/common_test.cpp`、`test/utils/fileutil_test.cpp` 和 `test/utils/jsonutil_test.cpp`，覆盖可执行文件绝对路径及切换工作目录、十六进制转换、百分号编码、URL 路径与文件名编码、URL 解码、HTML 文本转义、文件属性与二进制读写、目录和符号链接、压缩解压、JSON 转换及错误处理。编码与转义测试覆盖全部 256 个字节、斜杠策略、UTF-8、内嵌空字节、已有编码或实体、长文本，以及编码和解码往返；百分号编码使用独立的固定期望值，避免只检查往返时漏掉双方共同的错误。文件测试使用独立临时目录并自动清理；权限用例在当前用户能够绕过权限限制时跳过；符号链接、设备或跨根路径相关用例在环境不支持时跳过。`JsonUtil` 测试沿用接口当前的 JsonCpp 默认解析配置。
 
