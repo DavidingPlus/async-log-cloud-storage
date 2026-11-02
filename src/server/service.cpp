@@ -198,18 +198,18 @@ void Service::Upload(evhttp_request *req, void *arg)
     try
     {
         // 2. 读取 FileName、StorageType 请求头。先用原始指针接收 C 接口的返回值，检查字段是否存在。
-        auto headers = evhttp_request_get_input_headers(req);
-        const char *nameHeader = evhttp_find_header(headers, "FileName");
-        const char *typeHeader = evhttp_find_header(headers, "StorageType");
+        auto inputHeaders = evhttp_request_get_input_headers(req);
+        const char *fileNameHeader = evhttp_find_header(inputHeaders, "FileName");
+        const char *storageTypeHeader = evhttp_find_header(inputHeaders, "StorageType");
         // nullptr 表示请求头中没有这个字段，必须在构造 std::string 前检查。
-        if (!nameHeader || !typeHeader)
+        if (!fileNameHeader || !storageTypeHeader)
         {
             evhttp_send_reply(req, HTTP_BADREQUEST, "Missing FileName or StorageType", nullptr);
             return;
         }
 
         // 指针有效后，再将 C 字符串内容复制到 std::string，供后面的业务逻辑使用。
-        std::string encodedFileName = nameHeader, storageTypeText = typeHeader;
+        std::string encodedFileName = fileNameHeader, storageTypeText = storageTypeHeader;
         // 字段存在也可能指向 ""，所以 FileName 还需检查空值；StorageType 的值由解析函数统一校验。
         if (encodedFileName.empty())
         {
