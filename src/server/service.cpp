@@ -84,6 +84,8 @@ void Service::run()
     std::unique_ptr<evhttp, decltype(&evhttp_free)> http(evhttp_new(base.get()), evhttp_free);
     if (!http) throw std::runtime_error("Service::run(): evhttp_new() failed");
 
+    // TODO 实现分块上传，并在接收层设置独立的单次请求正文上限。
+
     // 使用配置中的监听地址和端口，Config 已校验端口范围。
     if (0 != evhttp_bind_socket(http.get(), m_serverIp.data(), static_cast<ev_uint16_t>(m_serverPort))) throw std::runtime_error("Service::run(): evhttp_bind_socket() failed for " + m_serverIp + ":" + std::to_string(m_serverPort));
 
@@ -172,7 +174,7 @@ void Service::Upload(evhttp_request *req, void *arg)
     // 3. 将 FileName 从 Base64 解码，校验单个文件名、UTF-8 和长度。
     // 4. 根据存储策略选择配置目录，与文件名组合成最终数据文件路径。
     // 5. 检查下载 URL 和磁盘路径是否已被占用，发生冲突返回 409。
-    // 6. 把请求正文中的原始文件字节复制到 content，保留二进制内容中的 '\0'，允许零字节文件。
+    // 6. 检查完整原始文件大小，超限返回 413；通过后复制到 content，保留二进制内容中的 '\0'，允许零字节文件。
     // 7. 确保存储目录存在，将原始内容或按 bundle_format 压缩后的内容写入磁盘数据文件。
     // 8. 数据文件写入成功后，再完成以下流程：
     //    a. 根据实际文件生成 FileMetadata，包含绝对路径、修改时间、实际存储大小和下载 URL。
@@ -285,12 +287,17 @@ void Service::Upload(evhttp_request *req, void *arg)
         }
 
         // 6. 通过前面的检查后，再分配内存并复制正文，保留二进制内容中的 '\0'。
-        // TODO 按统一的小文件大小策略，在 HTTP 接收层和这里分配内存前限制正文长度。
-
         // 取得请求正文缓冲区。
         auto inputBuf = evhttp_request_get_input_buffer(req);
         // 取得请求正文的字节数。
         size_t length = evbuffer_get_length(inputBuf);
+
+        // 当前版本所有正文已完整缓冲，分块上传及单次请求上限接入后再限制接收内存。
+        if (length > kMaxFileSize)
+        {
+            evhttp_send_reply(req, HTTP_ENTITYTOOLARGE, "File too large", nullptr);
+            return;
+        }
 
         // 准备接收内容的 content。
         std::string content(length, '\0');
@@ -444,7 +451,6 @@ void Service::Download(evhttp_request *req, void *arg)
         }
 
         // 5. 先读取磁盘上实际保存的字节，若是压缩存储，在内存中解压为原始内容。
-        // TODO 按统一的小文件大小策略，在完整读取前检查存储大小，压缩存储考虑编码开销。
         auto content = file.getContent();
         if (StorageType::Compressed == storageType) content = utils::FileUtil::UnCompress(content);
 

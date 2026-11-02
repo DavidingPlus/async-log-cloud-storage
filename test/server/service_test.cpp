@@ -628,6 +628,42 @@ TEST_F(ServiceHttpTests, UploadsTextBinaryAndEmptyFilesAndRestoresTheirMetadata)
     EXPECT_EQ(Count(http.get("/").m_body, "class='file-item'"), files.size());
 }
 
+TEST_F(ServiceHttpTests, UploadsFilesAtTheOriginalSizeLimit)
+{
+    server::Service service;
+    LocalHttpServer http(service);
+    const std::string content(Access::maxFileSize(), 'A');
+    for (const std::string type : {"uncompressed", "compressed"})
+    {
+        SCOPED_TRACE(type);
+        const auto name = type + ".bin";
+        ASSERT_EQ(http.post("/upload", {{"FileName", base64_encode(name)}, {"StorageType", type}}, content).m_code, 201);
+        EXPECT_EQ(http.get("/download/" + name).m_body, content);
+    }
+}
+
+TEST_F(ServiceHttpTests, RejectsOversizedOriginalFilesWithoutChangingStorage)
+{
+    server::Service service;
+    LocalHttpServer http(service);
+    const std::string existingName = "existing.txt";
+    ASSERT_EQ(http.post("/upload", {{"FileName", base64_encode(existingName)}, {"StorageType", "uncompressed"}}, "original").m_code, 201);
+    const auto metadata = utils::FileUtil(m_metadataFile).getContent();
+    // 可压缩的正文也按原始大小拒绝，不能以压缩后的磁盘大小绕过上限。
+    const std::string content(Access::maxFileSize() + 1, 'A');
+    for (const std::string type : {"uncompressed", "compressed"})
+    {
+        SCOPED_TRACE(type);
+        const auto name = type + ".bin";
+        EXPECT_EQ(http.post("/upload", {{"FileName", base64_encode(name)}, {"StorageType", type}}, content).m_code, HTTP_ENTITYTOOLARGE);
+        const auto directory = type == "uncompressed" ? server::Config::GetInstance().getUncompressedFilesDirPath() : server::Config::GetInstance().getCompressedFilesDirPath();
+        EXPECT_FALSE(fs::exists(directory / name));
+        EXPECT_EQ(Access::data(service).getAll().size(), 1U);
+        EXPECT_EQ(utils::FileUtil(m_metadataFile).getContent(), metadata);
+    }
+    EXPECT_EQ(http.get("/download/" + existingName).m_body, "original");
+}
+
 TEST_F(ServiceHttpTests, RejectsInvalidUploadParametersBeforeCreatingFiles)
 {
     server::Service service;

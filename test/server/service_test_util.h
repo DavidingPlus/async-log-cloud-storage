@@ -52,6 +52,7 @@ namespace service_test
         static std::string formatFileSize(uint64_t size);
         static std::string fileListHtml(const std::vector<server::FileMetadata> &files);
         static std::string etag(const server::FileMetadata &info);
+        static size_t maxFileSize();
         static Callback callback();
         static const std::string &ip(const server::Service &service);
         static int port(const server::Service &service);

@@ -16,6 +16,8 @@ namespace service_test
 
     std::string Access::etag(const server::FileMetadata &info) { return server::Service::GetETag(info); }
 
+    size_t Access::maxFileSize() { return server::Service::kMaxFileSize; }
+
     Access::Callback Access::callback() { return &server::Service::GenericCallback; }
 
     const std::string &Access::ip(const server::Service &service) { return service.m_serverIp; }
