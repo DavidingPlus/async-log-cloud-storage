@@ -40,7 +40,7 @@
 | `8.后续优化.md` | 普通存储完成后，再选择需要的扩展 |
 | `【补充】客户端扩展.md` | 后续需要自动扫描和上传客户端文件时再实施 |
 
-HTTP 服务和 JSON 处理沿用参考项目的 libevent、JsonCpp，文件名通过 cpp-base64 编解码，使用 UTF8-CPP（XMake 包名 `utfcpp`）校验 UTF-8，压缩处理使用 bundle。dlog 已接入启动、关闭和入口异常日志，业务日志待完成。压缩上传与下载解压已接入真实 HTTP 测试，浏览器整体验收后续补齐。依赖版本以实际安装、编译和运行验证的结果为准。
+HTTP 服务和 JSON 处理沿用参考项目的 libevent、JsonCpp，文件名通过 cpp-base64 编解码，使用 UTF8-CPP（XMake 包名 `utfcpp`）校验 UTF-8，压缩处理使用 bundle。dlog 已接入服务生命周期、请求、上传、下载和错误日志。压缩上传与下载解压已接入真实 HTTP 测试，浏览器整体验收后续补齐。依赖版本以实际安装、编译和运行验证的结果为准。
 
 资料：[libevent HTTP 服务说明](https://libevent.org/libevent-book/Ref10_http_server.html)、[JsonCpp](https://github.com/open-source-parsers/jsoncpp)、[bundle](https://github.com/r-lyeh-archived/bundle)。
 
@@ -193,7 +193,7 @@ Service 通过 `evsignal_new()` 注册 SIGINT/SIGTERM，回调只调用 `event_b
 
 libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已实现。`GET /` 已返回文件列表页面，未知路径返回 404；SIGINT/SIGTERM 可使 `run()` 正常返回。
 
-`main()` 已接入首次启动准备、`Service::run()` 和日志生命周期，异常时输出原因并以非零状态退出；正式程序的启动测试已覆盖首次运行、重启恢复、信号退出和失败时的数据保护。业务日志及实际浏览器验收仍待完成。
+`main()` 已接入首次启动准备、`Service::run()` 和日志生命周期，异常时以非零状态退出，日志器创建后发生的异常记录到文件；正式程序的启动测试已覆盖首次运行、重启恢复、信号退出和失败时的数据保护。实际浏览器验收仍待完成。
 
 验收：访问 `http://127.0.0.1:8081/` 能获得响应；停止服务后有完整的关闭日志。
 
@@ -371,9 +371,9 @@ dlog 1.1.0 的 FATAL 与其他等级一样异步提交，不自动刷新或终�
 
 当前仓库采用“通用工具静态库 + Linux 服务端静态库 + 服务端可执行程序 + 单元测试”的 XMake 应用工程，服务端主目标为 `async-log-cloud-storage-server`。已有 Linux 安装与打包流程，通用工具、服务端配置和元数据管理已有实现与单元测试。
 
-当前包依赖包括 libevent、bundle、JsonCpp、cpp-base64、UTF8-CPP 和 dlog。`Service` 已具备上传、列表页面和完整文件下载，两种存储策略通过真实 HTTP 测试；`src/server/main.cpp` 已接入首次启动准备、日志生命周期和服务运行，正式程序的启动与重启恢复已有隔离测试。dlog 业务日志及浏览器整体验收待完成。
+当前包依赖包括 libevent、bundle、JsonCpp、cpp-base64、UTF8-CPP 和 dlog。`Service` 已具备上传、列表页面和完整文件下载，两种存储策略通过真实 HTTP 测试；`src/server/main.cpp` 已接入首次启动准备、日志生命周期和服务运行，正式程序的启动与重启恢复已有隔离测试。实际浏览器整体验收待完成。
 
 上传采用自定义请求头协议：`FileName` 传递 UTF-8 文件名的 Base64 编码，`StorageType` 使用 `uncompressed`、`compressed`。相关业务、页面同源上传及 16 MiB 原始文件大小上限已实现，应用启动及重启恢复测试通过，实际浏览器及反向代理联调仍待完成。
 
-下一步完成 dlog 业务日志和应用整体验收，再按第 7 节推进后续功能。应用入口与首次启动、原始文件大小上限、元数据持久化失败回滚、上传文件名校验及 Service 信号停止已实现；文件损坏检测与其余增强按实际需求选择。
+下一步完成应用整体验收，再按第 7 节推进后续功能。应用入口与首次启动、原始文件大小上限、元数据持久化失败回滚、上传文件名校验及 Service 信号停止已实现；文件损坏检测与其余增强按实际需求选择。
 
