@@ -34,7 +34,7 @@ void Config::readConfig()
     if (!root.isObject()) throw std::invalid_argument("Config::readConfig(): root must be an object");
 
     // 校验字段。
-    for (const char *field : {"server_ip", "download_prefix", "compressed_files_dir", "uncompressed_files_dir", "metadata_file"})
+    for (const char *field : {"server_ip", "download_prefix", "compressed_files_dir", "uncompressed_files_dir", "metadata_file", "log_file_base_path"})
     {
         if (!root[field].isString() || root[field].asString().empty()) throw std::invalid_argument(std::string("Config::readConfig(): '") + field + "' must be a non-empty string");
     }
@@ -62,6 +62,7 @@ void Config::readConfig()
     m_compressedFilesDirPath = (executableDir / root["compressed_files_dir"].asString()).lexically_normal();
     m_uncompressedFilesDirPath = (executableDir / root["uncompressed_files_dir"].asString()).lexically_normal();
     m_metadataFilePath = (executableDir / root["metadata_file"].asString()).lexically_normal();
+    m_logFileBasePath = (executableDir / root["log_file_base_path"].asString()).lexically_normal();
     m_bundleFormat = root["bundle_format"].asInt();
 }
 

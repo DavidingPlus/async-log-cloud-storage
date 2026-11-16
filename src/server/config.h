@@ -22,7 +22,7 @@ public:
     static Config &GetInstance();
 
     // 从可执行文件所在目录的 config/server.conf 读取配置，仅在启动阶段调用。字段校验失败抛出 std::invalid_argument。
-    // 三个文件系统路径均以可执行文件所在目录为基准解析为绝对路径，并做词法标准化。
+    // 文件系统路径均以可执行文件所在目录为基准解析为绝对路径，并做词法标准化。
     // XMake 流程会自动将 src/server/config/server.conf 拷贝到可执行文件目录下的 config/server.conf。web/template.html 同理。
     void readConfig();
 
@@ -37,6 +37,8 @@ public:
     std::filesystem::path getUncompressedFilesDirPath() const { return m_uncompressedFilesDirPath; }
 
     std::filesystem::path getMetadataFilePath() const { return m_metadataFilePath; }
+
+    std::filesystem::path getLogFileBasePath() const { return m_logFileBasePath; }
 
     int getBundleFormat() const { return m_bundleFormat; }
 
@@ -63,6 +65,9 @@ private:
 
     // 文件元数据持久化文件的绝对路径。
     std::filesystem::path m_metadataFilePath;
+
+    // 轮转日志文件的绝对基准路径，不包含日期和序号。
+    std::filesystem::path m_logFileBasePath;
 
     // bundle 压缩格式编号。
     int m_bundleFormat = 0;
