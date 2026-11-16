@@ -52,7 +52,7 @@ flowchart LR
     B --> C[文件存储与压缩]
     B --> D[文件元数据管理]
     B --> E[dlog 日志]
-    E --> F[AsyncLogging 后台线程]
+    E --> F[LogWorker 后台任务]
     F --> G[LogFile 日志文件]
 ```
 
@@ -93,40 +93,7 @@ flowchart LR
 
 ## 4. dlog 能力与接入生命周期
 
-dlog 已具备日志格式化、多线程追加、异步写盘、文件轮转，以及正常停止时排空缓冲区的能力，可以承担本项目的日志基础。主要分工如下：
-
-| 组件 | 职责 |
-| --- | --- |
-| `Logger` / `LogStream` | 拼接日志元数据和正文，通过输出回调交给后端 |
-| `AsyncLogging` | 接收并发追加的日志，在后台线程中批量写入 |
-| `LogFile` | 管理日志文件、刷新和轮转 |
-
-相关资料：[dlog 说明与示例](https://github.com/DavidingPlus/dlog/blob/master/README.md)、[异步后端实现](https://github.com/DavidingPlus/dlog/blob/master/src/core/asynclogging.cpp)。
-
-当前保持 dlog 原状，先推进存储部分。下面的日志配置属于应用侧接入，遇到具体需求时再考虑修改日志库。
-
-### 启动与运行
-
-1. 创建并启动 `dlog::AsyncLogging`，配置日志路径、轮转大小和刷新间隔。
-2. 在开始处理请求前，通过 `dlog::Logger::SetOutput()` 将格式化后的日志交给异步后端的 `append()`。
-3. 文件日志使用 `dlog::LogLevelColorMode::OFF`，避免写入终端颜色控制序列。
-4. 业务代码继续使用 dlog 的函数式日志宏，例如：
-
-```cpp
-DLOG_INFO() << "upload finished, file=" << filename
-            << ", size=" << fileSize;
-```
-
-输出回调接收的是“起始地址 + 有效长度”的字节序列，应按原始长度传给后端，不按以空字符结尾的字符串处理。输出和刷新回调是进程内共享配置，设置与切换时需要保证没有并发日志调用。[Logger 接口](https://github.com/DavidingPlus/dlog/blob/master/src/core/logger.h)
-
-### 正常关闭
-
-1. 停止接收新请求并退出 HTTP 事件循环，确保不再产生业务日志；第一版不要求等待所有在途请求完成的复杂排空机制。
-2. 完成业务资源清理，写出最后的关闭日志。
-3. 将输出和刷新回调切换为不引用异步后端的有效回调。
-4. 调用异步后端的 `stop()`，排空待写队列和未写满的缓冲区，等待后台线程退出，再销毁后端。
-
-关闭顺序需要保证异步后端停止后不再向它追加日志，也不会通过回调访问已经销毁的后端。[异步后端实现](https://github.com/DavidingPlus/dlog/blob/master/src/core/asynclogging.cpp)
+dlog 1.1.0 使用 `LogManager` 管理异步 `Logger`，通过 `LogWorker` 和文件输出目标完成异步写入及轮转。服务端日志位置、生命周期、失败处理和验收步骤见 [服务端日志接入计划](server-logging-plan.md)。
 
 ## 5. 第一版 HTTP 协议
 
@@ -206,7 +173,7 @@ enum class StorageType
 
 `GenericCallback()` 当前按参考流程提取 URI 路径并进行 URL 解码，再依次判断：路径以配置下载前缀开头时调用 `Download()`，路径等于 `/upload` 时调用 `Upload()`，路径等于 `/` 时调用 `ShowFileList()`，其余返回 404。通用回调声明为 `noexcept`，URI 或路径指针缺失时返回 400；仅将路径解码的 `std::invalid_argument` 转为 400，其他未处理的业务异常由最外层 `catch (...)` 转为 500，避免异常逸出事件循环。真实 HTTP 测试验证非法百分号编码、模板缺失、目录占位及读取失败的响应，并在失败后继续请求和恢复资源。`Upload()` 已校验 POST，`Download()` 已校验 GET。下载从请求的原始编码路径重新取值并解码，不对 GenericCallback 的解码结果再次解码。下载路由使用 `find(prefix) == 0` 从路径起始位置匹配，默认及自定义前缀下的未知路径均有回归测试；未增加配置校验或重构路径解析。
 
-启动阶段的目标顺序是“配置与日志 → 数据目录及缺失的元数据文件初始化 → 构造 `Service`（同时构造并加载成员 `DataManager`）→ `Service::run()`”。当前 `main()` 已完成配置、目录准备、缺失元数据初始化和 Service 启动，仅在元数据路径缺失时写入 `[]`；已有元数据加载失败时输出错误并以非零状态退出，不覆盖历史数据。Service 信号停止已实现，不额外增加类接口；dlog 初始化及 `run()` 返回后的日志关闭和刷新仍按第 4 节接入。
+启动阶段的目标顺序是“日志 → 配置 → 数据目录及缺失的元数据文件初始化 → 构造 `Service`（同时构造并加载成员 `DataManager`）→ `Service::run()`”。当前 `main()` 已完成配置、目录准备、缺失元数据初始化和 Service 启动，仅在元数据路径缺失时写入 `[]`；已有元数据加载失败时输出错误并以非零状态退出，不覆盖历史数据。Service 信号停止已实现，不额外增加类接口；dlog 初始化及 `run()` 返回后的日志关闭和刷新仍按第 4 节接入。
 
 Service 通过 `evsignal_new()` 注册 SIGINT/SIGTERM，回调只调用 `event_base_loopbreak()`；退出循环后由现有智能指针关闭监听并释放资源，不等待所有在途响应发送完成。应用侧仍需接入第 4 节的日志关闭与刷新。
 
@@ -217,8 +184,8 @@ Service 通过 `evsignal_new()` 注册 SIGINT/SIGTERM，回调只调用 `event_b
 #### 第 1 步：接入 dlog 与退出刷新（待完成）
 
 1. 使用已注册的自有 XMake 包仓库，将 dlog 加入 `package_dependencies.linux`，供 Linux 服务端接入。
-2. 在应用入口直接使用 dlog 的现有接口，按第 4 节完成初始化、输出回调设置和退出刷新；不预先要求新增封装函数或文件。
-3. 普通错误使用 `DLOG_ERROR()`；需要退出时由应用执行正常清理。
+2. 按第 4 节链接的计划创建命名文件日志器，完成日志输出和关闭排空。
+3. 使用指定日志器的宏记录错误；需要退出时由应用执行正常清理。
 
 验收：构建、运行主目标；日志文件中有启动、普通消息和关闭消息，最后一条日志在正常退出后仍存在。
 
@@ -382,7 +349,7 @@ SQLite 已提供磁盘索引、页缓存和事务管理，可作为按需读取�
 
 参考项目对 ERROR/FATAL 日志有备份逻辑。远程备份列入后续扩展，需要时再确定备份位置、触发方式和失败处理。[参考日志实现](https://github.com/youngyangyang04/Kama-AsynLogSystem-CloudStorage/blob/main/log_system/logs_code/AsyncLogger.hpp)
 
-dlog 的 `DLOG_FATAL()` 在输出后调用刷新回调，再终止进程；默认刷新回调只刷新标准输出。仅接入异步输出回调，不能保证 FATAL 日志在进程终止前写入文件。最小版本普通错误使用 `DLOG_ERROR()` 并返回失败，需要结束服务时执行正常清理。后续需要 FATAL 保障时，再设计同步刷新或备份机制，并通过独立进程验证终止前的日志结果。[Logger 实现](https://github.com/DavidingPlus/dlog/blob/master/src/core/logger.cpp)
+dlog 1.1.0 的 FATAL 与其他等级一样异步提交，不自动刷新或终止进程。普通错误使用指定文件日志器的 ERROR 宏，需要结束服务时执行正常清理。后续需要崩溃前的日志保障时，再设计同步刷新或备份机制，并通过独立进程验证。[Logger 实现](https://github.com/DavidingPlus/dlog/blob/master/src/core/logger.cpp)
 
 ### 跨平台适配
 
