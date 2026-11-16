@@ -21,7 +21,7 @@ xmake run async-log-cloud-storage-server
 
 默认访问 `http://127.0.0.1:8081/`。首次启动自动创建配置中的存储目录和元数据父目录，仅在元数据文件缺失时写入 `[]`；已有元数据读取或解析失败时报告错误并以非零状态退出，不重置历史数据。配置及其相对数据路径均以可执行文件所在目录为基准。
 
-使用 Ctrl+C 或 SIGTERM 正常停止，再次启动会加载原元数据。dlog 日志接入与退出刷新仍待完成。
+使用 Ctrl+C 或 SIGTERM 正常停止，再次启动会加载原元数据。服务端按配置创建轮转日志文件，记录启动、停止和启动或运行错误，退出时等待日志排空；上传、下载等业务日志仍待接入。
 
 ## 单元测试
 
@@ -56,7 +56,7 @@ Linux 服务端的 `Config::readConfig()` 从可执行文件目录下的 `config
 
 配置中的 `compressed_files_dir`、`uncompressed_files_dir` 和 `metadata_file` 分别指定压缩文件目录、未经服务端压缩的文件目录和元数据持久化文件。默认路径为 `./data/compressed/`、`./data/uncompressed/` 和 `./data/metadata.json`。`Config` 构造时通过 `readConfig()` 将相对路径按可执行文件所在目录解析为绝对路径，再对相对路径解析结果和显式配置的绝对路径统一调用 `lexically_normal()`，以 `std::filesystem::path` 保存和返回；再次读取配置时沿用相同规则。`DataManager` 通过 `getMetadataFilePath()` 获取元数据持久化文件路径。`download_prefix` 保持为路由字符串。
 
-`log_file_base_path` 指定将来轮转日志的基路径，配置文件中的默认值是 `./logs/server`；该字段必填且必须是非空字符串。相对路径以可执行文件目录为基准并做词法标准化。日志器接入仍待完成。
+`log_file_base_path` 指定轮转日志的基路径，配置文件中的默认值是 `./logs/server`；该字段必填且必须是非空字符串。相对路径以可执行文件目录为基准并做词法标准化。日志按日期及 64 MiB 大小轮转，配置读取或日志器创建失败时向标准错误报告。
 
 配置由维护者手工管理并保证正确、规范，约定压缩与不压缩的存储目录指向不同位置、下载前缀不与固定路由冲突，运行期间不修改或重载配置；代码不额外检查两个目录是否相同。第一版不支持外部进程修改数据文件和元数据，也不自动迁移重启后变更目录或前缀的历史数据。第一版待办与可选增强见 [Service 审查与待办](docs/service-todo.md)。
 

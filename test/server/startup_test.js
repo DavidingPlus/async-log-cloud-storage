@@ -45,6 +45,11 @@ async function fixture(t) {
         port,
         url,
         metadata: path.join(directory, config.metadata_file),
+        logs() {
+            const logDir = path.join(directory, 'logs');
+            return fs.readdirSync(logDir).filter(name => /^server\.\d{8}\.\d+\.log$/.test(name))
+                .sort().map(name => fs.readFileSync(path.join(logDir, name), 'utf8'));
+        },
         start() {
             // 工作目录与程序目录不同，确认相对配置路径仍基于可执行文件解析。
             const child = spawn(binary, [], { cwd: os.tmpdir(), stdio: ['ignore', 'ignore', 'pipe'] });
@@ -96,6 +101,10 @@ test('first startup creates storage, serves HTTP, and restores uploads after a c
 
     job.child.kill('SIGINT');
     assert.deepEqual(await job.closed, [0, null], job.stderr);
+    const firstLogs = app.logs();
+    assert.equal(firstLogs.length, 1);
+    assert.match(firstLogs[0], /Server starting/);
+    assert.match(firstLogs[0], /Server stopped/);
     const metadata = fs.readFileSync(app.metadata, 'utf8');
 
     job = app.start();
@@ -109,6 +118,11 @@ test('first startup creates storage, serves HTTP, and restores uploads after a c
     }
     job.child.kill('SIGTERM');
     assert.deepEqual(await job.closed, [0, null], job.stderr);
+    const restartedLogs = app.logs();
+    assert.equal(restartedLogs.length, 2);
+    assert.equal(restartedLogs[0], firstLogs[0]);
+    assert.match(restartedLogs[1], /Server starting/);
+    assert.match(restartedLogs[1], /Server stopped/);
     assert.equal(fs.readFileSync(app.metadata, 'utf8'), metadata);
 });
 
@@ -119,7 +133,7 @@ for (const [description, content] of [['empty', ''], ['malformed JSON', '{broken
         fs.writeFileSync(app.metadata, content);
         const job = app.start();
         assert.deepEqual(await job.closed, [1, null]);
-        assert.match(job.stderr, /Server failed:/);
+        assert.match(app.logs().join(''), /Server failed:/);
         assert.equal(fs.readFileSync(app.metadata, 'utf8'), content);
     });
 }
@@ -133,8 +147,43 @@ test('startup reports an occupied port and keeps existing metadata', { timeout: 
     fs.writeFileSync(app.metadata, '\n[]\n');
     const job = app.start();
     assert.deepEqual(await job.closed, [1, null]);
-    assert.match(job.stderr, /Server failed:.*evhttp_bind_socket\(\) failed/);
+    assert.match(app.logs().join(''), /Server failed:.*evhttp_bind_socket/);
     assert.equal(fs.readFileSync(app.metadata, 'utf8'), '\n[]\n');
+});
+
+test('invalid configuration fails before the logger is created', { timeout: 10000 }, async t => {
+    const app = await fixture(t);
+    fs.writeFileSync(path.join(app.directory, 'config/server.conf'), '{broken');
+    const job = app.start();
+    assert.deepEqual(await job.closed, [1, null]);
+    assert.equal(fs.existsSync(path.join(app.directory, 'logs')), false);
+});
+
+test('configured log base path is relative to the executable directory', { timeout: 10000 }, async t => {
+    const app = await fixture(t);
+    const configPath = path.join(app.directory, 'config/server.conf');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    config.log_file_base_path = './custom/logs/cloud';
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    const job = app.start();
+    await app.ready(job);
+    job.child.kill('SIGTERM');
+    assert.deepEqual(await job.closed, [0, null], job.stderr);
+    const logDir = path.join(app.directory, 'custom/logs');
+    const files = fs.readdirSync(logDir);
+    assert.equal(files.length, 1);
+    assert.match(files[0], /^cloud\.\d{8}\.\d+\.log$/);
+    assert.match(fs.readFileSync(path.join(logDir, files[0]), 'utf8'), /Server stopped/);
+    assert.equal(fs.existsSync(path.join(app.directory, 'logs')), false);
+});
+
+test('logger creation failure stops startup', { timeout: 10000 }, async t => {
+    const app = await fixture(t);
+    fs.writeFileSync(path.join(app.directory, 'logs'), 'keep');
+    const job = app.start();
+    assert.deepEqual(await job.closed, [1, null]);
+    assert.equal(fs.readFileSync(path.join(app.directory, 'logs'), 'utf8'), 'keep');
+    assert.equal(fs.existsSync(app.metadata), false);
 });
 
 test('startup reports a storage directory creation failure without replacing the existing file', { timeout: 10000 }, async t => {
@@ -143,7 +192,7 @@ test('startup reports a storage directory creation failure without replacing the
     fs.writeFileSync(occupied, 'keep');
     const job = app.start();
     assert.deepEqual(await job.closed, [1, null]);
-    assert.match(job.stderr, /Server failed:/);
+    assert.match(app.logs().join(''), /Server failed:/);
     assert.equal(fs.readFileSync(occupied, 'utf8'), 'keep');
     assert.equal(fs.existsSync(app.metadata), false);
 });

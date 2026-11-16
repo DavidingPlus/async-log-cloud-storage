@@ -1,16 +1,28 @@
 #include <iostream>
 
+#include <dlog/core/log.h>
+
 #include "server/config.h"
 #include "server/service.h"
+#include "utils/common.h"
 #include "utils/fileutil.h"
 
 
 int main()
 {
+    dlog::Logger::SharedPtr logger;
+    dlog::LogManager *logManager = nullptr;
+    int res = EXIT_SUCCESS;
+
     try
     {
-        // 1. 获取 Config 单例并且读取配置。
+        // 1. 获取 Config 单例并且读取配置。创建日志管理器和日志器结构。
         auto &config = server::Config::GetInstance();
+
+        logManager = &dlog::LogManager::GetInstance();
+        logger = logManager->buildLogger<dlog::RollFileFlush>("server", config.getLogFileBasePath(), 64LL * 1024 * 1024);
+
+        DLOG_LOGGER_INFO(logger) << "Server starting";
 
         // 2. 准备压缩和未压缩文件的存储目录。createDirectory() 会递归创建缺失的父目录，已有目录保持不变。
         utils::FileUtil(config.getCompressedFilesDirPath()).createDirectory();
@@ -24,15 +36,25 @@ int main()
         // symlink_status() 检查路径本身，连指向不存在目标的符号链接也视为已占用，避免沿链接创建文件。
         if (!std::filesystem::exists(std::filesystem::symlink_status(metadataPath))) utils::FileUtil(metadataPath).setContent("[]");
 
-        // 5. Service 构造时同时构造成员 DataManager，从刚准备好的元数据文件加载历史记录到内存。
-        server::Service service;
+        // Service 和 HTTP 资源在关闭日志系统之前释放。
+        {
+            // 5. Service 构造时同时构造成员 DataManager，从刚准备好的元数据文件加载历史记录到内存。
+            server::Service service;
 
-        // 6. 按配置监听 HTTP 请求并阻塞运行。收到 SIGINT/SIGTERM 后退出事件循环，释放监听和事件资源。run() 正常返回后 Service 自动销毁，main 执行结束时隐式返回 0；启动或运行异常统一由下方捕获。
-        service.run();
+            // 6. 按配置监听 HTTP 请求并阻塞运行，收到 SIGINT/SIGTERM 后退出并释放资源。
+            service.run();
+        }
+
+        DLOG_LOGGER_INFO(logger) << "Server stopped";
     }
     catch (const std::exception &error)
     {
-        std::cerr << "Server failed: " << error.what() << '\n';
-        return EXIT_FAILURE;
+        if (logger) DLOG_LOGGER_ERROR(logger) << "Server failed: " << utils::urlEncode(error.what());
+        res = EXIT_FAILURE;
     }
+
+    dlog::LogManager::Shutdown();
+
+
+    return res;
 }
