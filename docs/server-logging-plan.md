@@ -8,6 +8,7 @@
 
 - 先读取业务配置，再使用 `LogManager::GetInstance().buildLogger<RollFileFlush>()` 创建命名文件日志器。基路径由必填的 `log_file_base_path` 指定，默认配置位于可执行文件目录下的 `logs/server`；轮转大小先采用固定默认值，文件输出使用纯文本。
 - `DLOG_INFO()` 等默认宏写入终端；业务文件日志使用 `DLOG_LOGGER_INFO(logger)` 等显式日志器宏。当前 dlog 没有日志等级过滤接口，第一版只添加需要保留的记录，暂不增加日志等级配置。
+- `main()` 在读取配置后创建名为 `server` 的日志器，并保存在 `server/log.h` 声明的 `server::g_logger` 中；业务代码在初始化完成后使用，关闭日志系统后不再使用。
 - 配置读取或日志器初始化失败时向 stderr 报告并以非零状态退出。日志器初始化成功后，数据准备及运行失败也记录到文件，并保留入口的 stderr 错误提示。
 - 停止服务及所有日志生产者，完成业务资源清理并写出最后一条日志后，显式调用 `LogManager::Shutdown()`，等待排空并捕获后台输出错误。关闭失败使用 stderr 报告；关闭后不再使用 dlog。正常和异常退出均需执行关闭流程。
 - 业务代码直接使用 dlog 日志宏；日志提交失败由 dlog 报告到 stderr。日志消息构造、格式化和访问日志器仍可能抛异常，需注意 `noexcept` 回调等边界。

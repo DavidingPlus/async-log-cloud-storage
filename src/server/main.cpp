@@ -1,8 +1,7 @@
 #include <iostream>
 
-#include <dlog/core/log.h>
-
 #include "server/config.h"
+#include "server/log.h"
 #include "server/service.h"
 #include "utils/common.h"
 #include "utils/fileutil.h"
@@ -10,8 +9,6 @@
 
 int main()
 {
-    dlog::Logger::SharedPtr logger;
-    dlog::LogManager *logManager = nullptr;
     int res = EXIT_SUCCESS;
 
     try
@@ -19,10 +16,10 @@ int main()
         // 1. 获取 Config 单例并且读取配置。创建日志管理器和日志器结构。
         auto &config = server::Config::GetInstance();
 
-        logManager = &dlog::LogManager::GetInstance();
-        logger = logManager->buildLogger<dlog::RollFileFlush>("server", config.getLogFileBasePath(), 64LL * 1024 * 1024);
+        auto &logManager = dlog::LogManager::GetInstance();
+        server::g_logger = logManager.buildLogger<dlog::RollFileFlush>("server", config.getLogFileBasePath(), 64LL * 1024 * 1024);
 
-        DLOG_LOGGER_INFO(logger) << "Server starting";
+        DLOG_LOGGER_INFO(server::g_logger) << "Server starting";
 
         // 2. 准备压缩和未压缩文件的存储目录。createDirectory() 会递归创建缺失的父目录，已有目录保持不变。
         utils::FileUtil(config.getCompressedFilesDirPath()).createDirectory();
@@ -45,11 +42,11 @@ int main()
             service.run();
         }
 
-        DLOG_LOGGER_INFO(logger) << "Server stopped";
+        DLOG_LOGGER_INFO(server::g_logger) << "Server stopped";
     }
     catch (const std::exception &error)
     {
-        if (logger) DLOG_LOGGER_ERROR(logger) << "Server failed: " << utils::urlEncode(error.what());
+        if (server::g_logger) DLOG_LOGGER_ERROR(server::g_logger) << "Server failed: " << utils::urlEncode(error.what());
         res = EXIT_FAILURE;
     }
 
