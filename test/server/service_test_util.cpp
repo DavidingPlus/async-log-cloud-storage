@@ -1,4 +1,5 @@
 #include "service_test_util.h"
+#include "server/log.h"
 
 #include <csignal>
 #include <thread>
@@ -64,6 +65,8 @@ namespace service_test
 
     void ServiceFixture::SetUp()
     {
+        server::g_logger = dlog::LogManager::GetInstance().getDefaultLogger();
+
         m_originalWorkingDirectory = fs::current_path();
         m_configFile = utils::executableDirectory() / "config/server.conf";
         m_templateFile = utils::executableDirectory() / "web/template.html";

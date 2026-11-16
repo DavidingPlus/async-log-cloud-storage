@@ -105,6 +105,8 @@ test('first startup creates storage, serves HTTP, and restores uploads after a c
     assert.equal(firstLogs.length, 1);
     assert.match(firstLogs[0], /Server starting/);
     assert.match(firstLogs[0], /Server stopped/);
+    assert.match(firstLogs[0], /Upload completed .*storage=uncompressed/);
+    assert.match(firstLogs[0], /Upload completed .*storage=compressed/);
     const metadata = fs.readFileSync(app.metadata, 'utf8');
 
     job = app.start();
@@ -175,6 +177,56 @@ test('configured log base path is relative to the executable directory', { timeo
     assert.match(files[0], /^cloud\.\d{8}\.\d+\.log$/);
     assert.match(fs.readFileSync(path.join(logDir, files[0]), 'utf8'), /Server stopped/);
     assert.equal(fs.existsSync(path.join(app.directory, 'logs')), false);
+});
+
+test('records request, upload, download and failure details in the log', { timeout: 10000 }, async t => {
+    const app = await fixture(t);
+    const job = app.start();
+    await app.ready(job);
+
+    const name = 'hello\nfake.txt';
+    const upload = await fetch(`${app.url}/upload`, {
+        method: 'POST',
+        headers: { FileName: Buffer.from(name).toString('base64'), StorageType: 'uncompressed' },
+        body: 'abc'
+    });
+    assert.equal(upload.status, 201);
+    const { url } = await upload.json();
+    assert.equal((await fetch(app.url + url, { headers: { Range: 'bytes=1-2' } })).status, 206);
+    assert.equal((await fetch(`${app.url}/download/missing`)).status, 404);
+    assert.equal((await fetch(`${app.url}/upload`, { method: 'POST' })).status, 400);
+
+    fs.writeFileSync(`${app.metadata}.tmp`, 'occupied');
+    const failedUpload = await fetch(`${app.url}/upload`, {
+        method: 'POST',
+        headers: { FileName: Buffer.from('failed.txt').toString('base64'), StorageType: 'uncompressed' },
+        body: 'failed'
+    });
+    assert.equal(failedUpload.status, 500);
+    assert.equal(fs.existsSync(path.join(app.directory, 'data/uncompressed/failed.txt')), false);
+    assert.equal(fs.readFileSync(`${app.metadata}.tmp`, 'utf8'), 'occupied');
+
+    const storedFile = path.join(app.directory, 'data/uncompressed', name);
+    fs.rmSync(storedFile);
+    fs.mkdirSync(storedFile);
+    assert.equal((await fetch(app.url + url)).status, 500);
+
+    fs.rmSync(path.join(app.directory, 'web/template.html'));
+    assert.equal((await fetch(app.url)).status, 500);
+
+    job.child.kill('SIGTERM');
+    assert.deepEqual(await job.closed, [0, null], job.stderr);
+    const log = app.logs().join('');
+    assert.match(log, /Listening on 127\.0\.0\.1:/);
+    assert.match(log, /Request path=\/upload/);
+    assert.match(log, /Upload completed file=hello%0Afake\.txt storage=uncompressed bytes=3 stored_bytes=3/);
+    assert.match(log, /Download response prepared file=hello%0Afake\.txt storage=uncompressed status=206 bytes=2/);
+    assert.match(log, /Download not found path=\/download\/missing/);
+    assert.match(log, /Upload rejected: missing headers/);
+    assert.match(log, /Upload failed:/);
+    assert.match(log, /Download failed:/);
+    assert.match(log, /Request failed:/);
+    assert.equal(log.includes(name), false);
 });
 
 test('logger creation failure stops startup', { timeout: 10000 }, async t => {

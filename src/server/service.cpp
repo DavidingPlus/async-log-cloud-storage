@@ -1,6 +1,7 @@
 #include "server/service.h"
 
 #include "server/config.h"
+#include "server/log.h"
 #include "utils/common.h"
 #include "utils/fileutil.h"
 #include "utils/jsonutil.h"
@@ -152,6 +153,8 @@ void Service::run()
     // 使用配置中的监听地址和端口，Config 已校验端口范围。
     if (0 != evhttp_bind_socket(http.get(), m_serverIp.data(), static_cast<ev_uint16_t>(m_serverPort))) throw std::runtime_error("Service::run(): evhttp_bind_socket() failed for " + m_serverIp + ":" + std::to_string(m_serverPort));
 
+    DLOG_LOGGER_INFO(g_logger) << "Listening on " << m_serverIp << ":" << m_serverPort;
+
     // evhttp_set_gencb() 注册通用请求回调（generic callback），由 libevent 收到请求后调用 GenericCallback；this 作为上下文传给 arg 参数。
     evhttp_set_gencb(http.get(), GenericCallback, this);
 
@@ -194,6 +197,8 @@ void Service::GenericCallback(evhttp_request *req, void *arg) noexcept
             return;
         }
 
+        DLOG_LOGGER_INFO(g_logger) << "Request path=" << utils::urlEncode(requestPath);
+
         // run() 注册回调时传入 this 指针。
         Service *service = static_cast<Service *>(arg);
 
@@ -221,9 +226,9 @@ void Service::GenericCallback(evhttp_request *req, void *arg) noexcept
             evhttp_send_reply(req, HTTP_NOTFOUND, "Not Found", nullptr);
         }
     }
-    catch (...)
+    catch (const std::exception &error)
     {
-        // TODO 接入日志后记录原始异常；响应只返回通用错误，不暴露内部文件路径等细节。
+        DLOG_LOGGER_ERROR(g_logger) << "Request failed: " << utils::urlEncode(error.what());
 
         evhttp_send_reply(req, HTTP_INTERNAL, "Internal Server Error", nullptr);
     }
@@ -250,6 +255,8 @@ void Service::Upload(evhttp_request *req, void *arg)
     // 1. 检查 HTTP 方法，上传只接受 POST。其他方法返回 405，Allow 头告诉客户端这里接受 POST。
     if (EVHTTP_REQ_POST != evhttp_request_get_command(req))
     {
+        DLOG_LOGGER_WARN(g_logger) << "Upload rejected: method not allowed";
+
         evhttp_add_header(evhttp_request_get_output_headers(req), "Allow", "POST");
         evhttp_send_reply(req, HTTP_BADMETHOD, "Method Not Allowed", nullptr);
         return;
@@ -268,6 +275,8 @@ void Service::Upload(evhttp_request *req, void *arg)
         // nullptr 表示请求头中没有这个字段，必须在构造 std::string 前检查。
         if (!fileNameHeader || !storageTypeHeader)
         {
+            DLOG_LOGGER_WARN(g_logger) << "Upload rejected: missing headers";
+
             evhttp_send_reply(req, HTTP_BADREQUEST, "Missing FileName or StorageType", nullptr);
             return;
         }
@@ -277,6 +286,8 @@ void Service::Upload(evhttp_request *req, void *arg)
         // 字段存在也可能指向 ""，所以 FileName 还需检查空值；StorageType 的值由解析函数统一校验。
         if (encodedFileName.empty())
         {
+            DLOG_LOGGER_WARN(g_logger) << "Upload rejected: empty filename";
+
             evhttp_send_reply(req, HTTP_BADREQUEST, "Empty FileName", nullptr);
             return;
         }
@@ -289,6 +300,8 @@ void Service::Upload(evhttp_request *req, void *arg)
         }
         catch (...)
         {
+            DLOG_LOGGER_WARN(g_logger) << "Upload rejected: invalid storage type";
+
             evhttp_send_reply(req, HTTP_BADREQUEST, "Illegal storage type", nullptr);
             return;
         }
@@ -302,6 +315,8 @@ void Service::Upload(evhttp_request *req, void *arg)
         }
         catch (...)
         {
+            DLOG_LOGGER_WARN(g_logger) << "Upload rejected: invalid filename encoding";
+
             evhttp_send_reply(req, HTTP_BADREQUEST, "Invalid Base64 fileName", nullptr);
             return;
         }
@@ -309,6 +324,8 @@ void Service::Upload(evhttp_request *req, void *arg)
         // 校验 fileName 后才构造路径 path。
         if (!isValidFileName(fileName))
         {
+            DLOG_LOGGER_WARN(g_logger) << "Upload rejected: invalid filename";
+
             evhttp_send_reply(req, HTTP_BADREQUEST, "Invalid file name", nullptr);
             return;
         }
@@ -335,6 +352,8 @@ void Service::Upload(evhttp_request *req, void *arg)
             // getFileMetaDataByRequestPath() 函数未找到抛出异常，在 catch 分支被捕获然后正常执行后续，这正是我们想要的。如果找到，走 try 的后续分支返回 409。
             service->m_dataManager.getFileMetaDataByRequestPath(service->m_downloadPrefix + fileName);
 
+            DLOG_LOGGER_WARN(g_logger) << "Upload conflict file=" << utils::fileNameEncode(fileName);
+
             evhttp_send_reply(req, 409, "File already exists", nullptr);
             return;
         }
@@ -346,6 +365,8 @@ void Service::Upload(evhttp_request *req, void *arg)
         // symlink_status() 检查路径自身，连指向不存在目标的符号链接也视为已占用。
         if (std::filesystem::exists(std::filesystem::symlink_status(filePath)))
         {
+            DLOG_LOGGER_WARN(g_logger) << "Upload conflict file=" << utils::fileNameEncode(fileName);
+
             evhttp_send_reply(req, 409, "File already exists", nullptr);
             return;
         }
@@ -359,6 +380,8 @@ void Service::Upload(evhttp_request *req, void *arg)
         // 当前版本所有正文已完整缓冲，分块上传及单次请求上限接入后再限制接收内存。
         if (length > kMaxFileSize)
         {
+            DLOG_LOGGER_WARN(g_logger) << "Upload rejected: file too large bytes=" << length;
+
             evhttp_send_reply(req, HTTP_ENTITYTOOLARGE, "File too large", nullptr);
             return;
         }
@@ -398,6 +421,11 @@ void Service::Upload(evhttp_request *req, void *arg)
 
         // insert() 新增内存记录并持久化元数据 JSON 文件。保存失败时撤销新增，再抛异常进入下面的 catch，这一步是由 insert() 保证的。
         service->m_dataManager.insert(info);
+        fileWriteStarted = false;
+
+        DLOG_LOGGER_INFO(g_logger) << "Upload completed file=" << utils::fileNameEncode(fileName)
+                                   << " storage=" << storageTypeText << " bytes=" << length
+                                   << " stored_bytes=" << info.m_fileSize;
 
         // 9. 数据文件和元数据文件全部保存成功后，用请求自带的输出缓冲区返回 201 和 JSON。
         auto outputBuf = evhttp_request_get_output_buffer(req);
@@ -405,16 +433,18 @@ void Service::Upload(evhttp_request *req, void *arg)
         evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "application/json;charset=utf-8");
         evhttp_send_reply(req, 201, "Created", nullptr);
     }
-    catch (const std::exception &)
+    catch (const std::exception &exception)
     {
-        // TODO: 接入日志后记录原始异常，并报告文件清理错误。
-
         // 只清理本次已经开始写入的文件；error_code 重载避免清理失败再次抛异常。
         if (fileWriteStarted)
         {
             std::error_code error;
             std::filesystem::remove(filePath, error);
+
+            if (error) DLOG_LOGGER_ERROR(g_logger) << "Upload cleanup failed path=" << utils::urlEncode(filePath.string()) << " error=" << utils::urlEncode(error.message());
         }
+
+        DLOG_LOGGER_ERROR(g_logger) << "Upload failed: " << utils::urlEncode(exception.what());
 
         evhttp_send_reply(req, HTTP_INTERNAL, "Upload failed", nullptr);
     }
@@ -425,6 +455,8 @@ void Service::ShowFileList(evhttp_request *req, void *arg)
     // arg 是注册回调时传入的 this，通过它访问当前服务的元数据管理器。
     Service *service = static_cast<Service *>(arg);
     auto files = service->m_dataManager.getAll();
+
+    DLOG_LOGGER_INFO(g_logger) << "File list count=" << files.size();
 
     // 读取可执行文件旁 web 目录中的页面模板的内容。
     std::string content = utils::FileUtil(utils::executableDirectory() / "web" / "template.html").getContent();
@@ -483,6 +515,8 @@ void Service::Download(evhttp_request *req, void *arg)
         }
         catch (const std::out_of_range &)
         {
+            DLOG_LOGGER_WARN(g_logger) << "Download not found path=" << utils::urlEncode(requestPath);
+
             evhttp_send_reply(req, HTTP_NOTFOUND, "File not found", nullptr);
             return;
         }
@@ -503,6 +537,8 @@ void Service::Download(evhttp_request *req, void *arg)
         else
         {
             // 两个存储目录都未匹配，无法确定存储类型，返回内部错误并结束处理。但在正常的运作流程中根本走不到这个分支，只做防御性编程。
+            DLOG_LOGGER_ERROR(g_logger) << "Download has unknown storage path=" << utils::urlEncode(filePath.string());
+
             evhttp_send_reply(req, HTTP_INTERNAL, "Unknown storage directory", nullptr);
             return;
         }
@@ -510,6 +546,8 @@ void Service::Download(evhttp_request *req, void *arg)
         utils::FileUtil file(filePath);
         if (!file.exists())
         {
+            DLOG_LOGGER_WARN(g_logger) << "Download file missing path=" << utils::urlEncode(requestPath);
+
             evhttp_send_reply(req, HTTP_NOTFOUND, "File not found", nullptr);
             return;
         }
@@ -540,6 +578,8 @@ void Service::Download(evhttp_request *req, void *arg)
         // 416 表示请求的范围无法满足。
         if (416 == status)
         {
+            DLOG_LOGGER_WARN(g_logger) << "Download range not satisfiable path=" << utils::urlEncode(requestPath) << " bytes=" << total;
+
             auto contentRange = "bytes */" + std::to_string(total);
             evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Range", contentRange.data());
             evhttp_send_reply(req, 416, "Range Not Satisfiable", nullptr);
@@ -570,11 +610,16 @@ void Service::Download(evhttp_request *req, void *arg)
         // 7. 按长度发送二进制正文，保留 '\0'；libevent 会根据实际正文生成 Content-Length 响应字段。
         auto outputBuf = evhttp_request_get_output_buffer(req);
         evbuffer_add(outputBuf, content.data() + (compressed ? offset : 0), length);
+
+        DLOG_LOGGER_INFO(g_logger) << "Download response prepared file=" << utils::fileNameEncode(filePath.filename().string())
+                                   << " storage=" << (compressed ? "compressed" : "uncompressed")
+                                   << " status=" << status << " bytes=" << length;
+
         evhttp_send_reply(req, status, status == 206 ? "Partial Content" : "OK", nullptr);
     }
-    catch (const std::exception &)
+    catch (const std::exception &error)
     {
-        // TODO 接入日志后记录读取或解压异常。
+        DLOG_LOGGER_ERROR(g_logger) << "Download failed: " << utils::urlEncode(error.what());
 
         evhttp_send_reply(req, HTTP_INTERNAL, "Download failed", nullptr);
     }
