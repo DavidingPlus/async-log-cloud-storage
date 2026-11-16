@@ -133,6 +133,15 @@ if is_plat("linux") then
         add_files("src/server/main.cpp")
         set_targetdir("$(builddir)/$(plat)/$(arch)/$(mode)/bin/")
 
+        -- xmake install 内部会加入 target:pkgenvs() 后再收集依赖。在 xpack 打包分析动态库时临时加入相同的包环境，避免找到系统库而漏掉依赖包中的库。
+        before_installcmd(function (target)
+            target:data_set("pack_oldenvs", os.addenvs(target:pkgenvs()))
+        end)
+        -- 安装命令生成后恢复原环境，避免影响后续打包操作。
+        after_installcmd(function (target)
+            os.setenvs(target:data("pack_oldenvs"))
+        end)
+
         -- 配置阶段同步服务端配置和页面；修改资源后重新执行 xmake config 即可更新。
         on_config(function (target)
             local configdir = path.join(target:targetdir(), "config")

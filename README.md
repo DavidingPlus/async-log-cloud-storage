@@ -81,7 +81,7 @@ xmake f -m release
 xmake pack
 ```
 
-`xmake pack` 会自动编译服务端，并收集配置文件和实际需要的第三方动态库，无需先执行 `xmake install`。发布包不包含内部静态库、测试和开发示例。
+`xmake pack` 会自动编译服务端，并收集配置文件和实际需要的第三方动态库，无需先执行 `xmake install`。打包分析依赖时使用与安装相同的目标包环境，避免优先找到系统库而遗漏依赖包中的动态库。发布包不包含内部静态库、测试和开发示例。
 
 默认输出到 `build/xpack/async-log-cloud-storage-server/`，文件名包含平台、架构、构建模式和版本，例如：
 
