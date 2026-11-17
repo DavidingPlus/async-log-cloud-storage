@@ -93,7 +93,7 @@ flowchart LR
 
 ## 4. dlog 能力与接入生命周期
 
-dlog 1.1.0 使用 `LogManager` 管理异步 `Logger`，通过 `LogWorker` 和文件输出目标完成异步写入及轮转。服务端日志位置、生命周期、失败处理和验收步骤见 [服务端日志接入计划](server-logging-plan.md)。
+dlog 1.1.0 使用 `LogManager` 管理异步 `Logger`，通过 `LogWorker` 和文件输出目标完成异步写入及轮转。服务端日志位置、生命周期、失败处理和验收步骤见 [服务端日志接入计划](server-log.md)。
 
 ## 5. 第一版 HTTP 协议
 
@@ -223,7 +223,7 @@ libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已
 
 #### 第 5 步：接入 HTTP 上传
 
-当前上传先检查 POST、请求头缺失及空值，将存储策略解析为枚举后再解码并校验文件名，通过按 URL 查询及磁盘路径检查拒绝同名；确认原始正文不超过 16 MiB 后才复制二进制正文、创建目录，直接保存或按 `bundle_format` 压缩后保存，再生成并持久化元数据，成功返回 201 和包含下载 `url` 的 JSON。允许零字节文件；元数据保存失败时由 DataManager 回滚内存，本函数尝试清理本次文件。`encodedFileName`、`storageTypeText` 在原始指针判空后构造为 `std::string`，FileName 通过 `empty()` 检查空值；`storageTypeText` 交给匿名命名空间函数 `parseStorageType()` 校验并转换为 `StorageType storageType`，参数异常由 Upload 转为 400，后续业务分支统一使用枚举。解码后的名称由匿名命名空间函数 `isValidFileName()` 校验，规则见第 3、5 节。仍需补齐日志及清理错误记录。严格 Base64 格式校验和并发写入时的排他创建仅作为可选增强。
+当前上传先检查 POST、请求头缺失及空值，将存储策略解析为枚举后再解码并校验文件名，通过按 URL 查询及磁盘路径检查拒绝同名；确认原始正文不超过 16 MiB 后才复制二进制正文、创建目录，直接保存或按 `bundle_format` 压缩后保存，再生成并持久化元数据，成功返回 201 和包含下载 `url` 的 JSON。允许零字节文件；元数据保存失败时由 DataManager 回滚内存，本函数尝试清理本次文件。`encodedFileName`、`storageTypeText` 在原始指针判空后构造为 `std::string`，FileName 通过 `empty()` 检查空值；`storageTypeText` 交给匿名命名空间函数 `parseStorageType()` 校验并转换为 `StorageType storageType`，参数异常由 Upload 转为 400，后续业务分支统一使用枚举。解码后的名称由匿名命名空间函数 `isValidFileName()` 校验，规则见第 3、5 节。上传结果、错误及上传文件清理失败已记录日志；元数据临时文件清理失败的单独记录仍待补充。严格 Base64 格式校验和并发写入时的排他创建仅作为可选增强。
 
 1. 使用第 5 节约定的 `POST /upload`，读取 `FileName`、`StorageType` 请求头，将 UTF-8 文件名从 Base64 解码，将请求头字符串解析为 `StorageType` 枚举并按枚举判断存储策略，并读取二进制请求体。
 2. 校验必填请求头、编码、文件名、原始文件大小、目标路径占用和下载 URL 冲突；接受 `uncompressed` 和 `compressed`，允许零字节文件。当前检查发生在 libevent 已完整缓冲正文之后，仅避免后续复制、压缩和写盘；分块上传及接收层独立的单次请求上限列为后续 TODO。
@@ -243,7 +243,7 @@ libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已
 - 参考把解压结果写入普通存储目录，可能覆盖或删除同名文件；当前仅在内存中解压。
 - 参考部分错误响应后没有立即返回，且仅凭 If-Range 就返回 206、未截取 Range；当前错误响应后立即返回，按实际区间返回 206 和 Content-Range，成功下载声明 Accept-Ranges: bytes，完整下载返回 200。
 
-第一版仍需补齐日志。文件由服务管理，不实现外部修改后的自动同步，文件损坏检测仅作为可选增强；已有读写及解压异常处理保留。单区间 Range / If-Range 已实现；HEAD、缓存条件请求、流式传输及解压过程内存限额仍为可选增强。
+下载结果和错误已记录日志。文件由服务管理，不实现外部修改后的自动同步，文件损坏检测仅作为可选增强；已有读写及解压异常处理保留。单区间 Range / If-Range 已实现；HEAD、缓存条件请求、流式传输及解压过程内存限额仍为可选增强。
 
 1. `GET /` 直接渲染文件列表及下载链接，不要求独立 `/files` JSON 接口。
 2. `GET /download/<编码后的文件名>` 根据元数据定位文件，并返回原始二进制内容。
