@@ -20,6 +20,7 @@ int main()
         server::g_logger = logManager.buildLogger<dlog::RollFileFlush>("server", config.getLogFileBasePath(), 64LL * 1024 * 1024);
 
         DLOG_LOGGER_INFO(server::g_logger) << "Server starting";
+        std::cout << "Server starting" << std::endl;
 
         // 2. 准备压缩和未压缩文件的存储目录。createDirectory() 会递归创建缺失的父目录，已有目录保持不变。
         utils::FileUtil(config.getCompressedFilesDirPath()).createDirectory();
@@ -43,10 +44,15 @@ int main()
         }
 
         DLOG_LOGGER_INFO(server::g_logger) << "Server stopped";
+        std::cout << "Server stopped" << std::endl;
     }
     catch (const std::exception &error)
     {
-        if (server::g_logger) DLOG_LOGGER_ERROR(server::g_logger) << "Server failed: " << utils::urlEncode(error.what());
+        if (server::g_logger)
+        {
+            DLOG_LOGGER_ERROR(server::g_logger) << "Server failed: " << utils::urlEncode(error.what());
+            std::cerr << "Server failed: " << utils::urlEncode(error.what()) << '\n';
+        }
         res = EXIT_FAILURE;
     }
 
