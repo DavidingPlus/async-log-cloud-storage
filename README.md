@@ -25,6 +25,16 @@ xmake run async-log-cloud-storage-server
 
 使用 Ctrl+C 或 SIGTERM 正常停止，再次启动会加载原元数据。服务端按配置创建轮转日志文件，记录启动、请求、上传、下载及错误信息，退出时等待日志排空。
 
+## 启动 Web 客户端
+
+在另一终端运行（需要 Node.js 18 或更高版本）。三个参数依次是后端 IP、后端端口和前端端口，下面是默认值。
+
+```bash
+node src/client/web/main.js 127.0.0.1 7081 7080
+```
+
+打开 [http://127.0.0.1:7080/](http://127.0.0.1:7080/)。Node.js 提供网页，并把文件列表、上传和下载请求转发给配置的后端。后端可在另一台机器上运行，所填 IP 和端口必须能从运行 Node.js 的机器访问。前端只监听本机回环地址。
+
 ## 单元测试
 
 `bundle`、`cpp-base64`、`jsoncpp` 和 `libevent` 由 XMake 下载和链接，沿用项目当前构建模式的动态库配置。启用 GoogleTest 后运行：
