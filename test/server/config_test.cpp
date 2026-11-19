@@ -332,7 +332,7 @@ TEST_F(ConfigTests, RejectsNonIntegerPortsAndCompressionFormats)
     for (const char *field : {"server_port", "bundle_format"})
     {
         SCOPED_TRACE(field);
-        for (const auto &value : {Json::Value(), Json::Value(""), Json::Value("8081"), Json::Value(false), Json::Value(true), Json::Value(-0.5), Json::Value(0.5), Json::Value(1.5), Json::Value(Json::arrayValue), Json::Value(Json::objectValue)})
+        for (const auto &value : {Json::Value(), Json::Value(""), Json::Value("7081"), Json::Value(false), Json::Value(true), Json::Value(-0.5), Json::Value(0.5), Json::Value(1.5), Json::Value(Json::arrayValue), Json::Value(Json::objectValue)})
         {
             SCOPED_TRACE(Json::writeString(Json::StreamWriterBuilder{}, value));
             auto root = updatedConfig();
@@ -422,9 +422,9 @@ TEST_F(ConfigTests, AcceptsPortBoundariesAndSupportedCompressionFormats)
 
 TEST_F(ConfigTests, AcceptsIntegralRealNumbersAccordingToJsonCppSemantics)
 {
-    // isInt() 判断数值能否表示为 int，因此 8081.0 这样的整数值也合法。
+    // isInt() 判断数值能否表示为 int，因此 7081.0 这样的整数值也合法。
     auto root = updatedConfig();
-    root["server_port"] = 8081.0;
+    root["server_port"] = 7081.0;
     root["bundle_format"] = static_cast<double>(bundle::LZIP);
     writeConfig(root);
 
