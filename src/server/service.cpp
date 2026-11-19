@@ -13,7 +13,6 @@
 #include <iomanip>
 #include <memory>
 #include <optional>
-#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -239,11 +238,6 @@ void Service::GenericCallback(evhttp_request *req, void *arg) noexcept
         {
             Upload(req, arg);
         }
-        // 显示已存储文件列表，返回一个 HTML 页面给浏览器。
-        else if ("/" == requestPath)
-        {
-            ShowFileList(req, arg);
-        }
         // 404。
         else
         {
@@ -468,34 +462,6 @@ void Service::Upload(evhttp_request *req, void *arg)
     }
 }
 
-void Service::ShowFileList(evhttp_request *req, void *arg)
-{
-    // arg 是注册回调时传入的 this，通过它访问当前服务的元数据管理器。
-    Service *service = static_cast<Service *>(arg);
-    auto files = service->m_dataManager.getAll();
-
-    DLOG_LOGGER_INFO(g_logger) << "File list count=" << files.size();
-
-    // 读取可执行文件旁 web 目录中的页面模板的内容。
-    std::string content = utils::FileUtil(utils::executableDirectory() / "web" / "template.html").getContent();
-
-    // regex_replace() 用 $$ 表示字面的 $，防止文件列表中的 $& 等内容被解释成替换指令。
-    std::string fileListHtml;
-    for (auto &ch : GenerateFileListHtml(files))
-    {
-        if ('$' == ch) fileListHtml += '$';
-
-        fileListHtml += ch;
-    }
-    content = std::regex_replace(content, std::regex("\\{\\{FILE_LIST\\}\\}"), fileListHtml);
-
-    // 写入请求自带的响应缓冲区，设置 HTML 类型并返回 200。
-    evbuffer *buf = evhttp_request_get_output_buffer(req);
-    evbuffer_add(buf, content.data(), content.size());
-    evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "text/html;charset=utf-8");
-    evhttp_send_reply(req, HTTP_OK, nullptr, nullptr);
-}
-
 void Service::ListFiles(evhttp_request *req, void *arg)
 {
     // 整体流程：检查 HTTP 方法 → 读取文件元数据快照 → 校验并组装列表 → 返回 JSON。
@@ -563,6 +529,8 @@ void Service::ListFiles(evhttp_request *req, void *arg)
     {
         throw std::runtime_error("ListFiles(): could not prepare JSON response");
     }
+
+    DLOG_LOGGER_INFO(g_logger) << "File list count=" << files.size();
 
     evhttp_send_reply(req, HTTP_OK, nullptr, buffer.get());
 }
@@ -730,57 +698,6 @@ std::string Service::FormatFileTime(std::filesystem::file_time_type t)
     std::ostringstream stream;
     stream << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S");
     if (stream.fail()) throw std::runtime_error("FormatFileTime(): file time formatting failed");
-
-
-    return stream.str();
-}
-
-std::string Service::FormatFileSize(uint64_t bytes)
-{
-    // 每 1024 字节进一档，最大使用 GB，显示时固定保留两位小数。
-    constexpr const char *units[] = {"B", "KB", "MB", "GB"};
-    int index = 0;
-    double size = static_cast<double>(bytes);
-
-    while (size >= 1024 && index < 3)
-    {
-        size /= 1024;
-        ++index;
-    }
-
-    std::ostringstream stream;
-    stream << std::fixed << std::setprecision(2) << size << " " << units[index];
-    if (stream.fail()) throw std::runtime_error("FormatFileSize(): file size formatting failed");
-
-
-    return stream.str();
-}
-
-std::string Service::GenerateFileListHtml(const std::vector<FileMetadata> &files)
-{
-    std::ostringstream stream;
-    stream << "<div class='file-list'><h3>已上传文件</h3>";
-
-    auto compressedDir = Config::GetInstance().getCompressedFilesDirPath();
-    for (auto &file : files)
-    {
-        auto filePath = file.m_absoluteFilePath.lexically_normal();
-        // 按配置的实际目录判断存储类型，避免根据文件名中的 compressed 等字样误判。
-        bool isCompressed = filePath == (compressedDir / filePath.filename()).lexically_normal();
-
-        stream << "<div class='file-item'>"
-               << "<div class='file-info'>"
-               << "<span>📄" << utils::escapeHtmlText(filePath.filename().string()) << "</span>"
-               << "<span class='file-type'>" << (isCompressed ? "压缩存储" : "未压缩存储") << "</span>"
-               << "<span>存储大小：" << FormatFileSize(file.m_fileSize) << "</span>"
-               << "<span>" << FormatFileTime(file.m_mtime) << "</span>"
-               << "</div>"
-               << "<button type='button' onclick=\"window.location='" << utils::urlEncode(file.m_url) << "'\">⬇️ 下载</button>"
-               << "</div>";
-    }
-
-    stream << "</div>";
-    if (stream.fail()) throw std::runtime_error("GenerateFileListHtml(): file list formatting failed");
 
 
     return stream.str();

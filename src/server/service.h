@@ -7,7 +7,6 @@
 
 #include <filesystem>
 #include <string>
-#include <vector>
 
 
 struct evhttp_request;
@@ -48,9 +47,6 @@ private:
     // 上传处理：解码并校验 FileName（单个文件名、有效 UTF-8、1~255 字节），原始文件超过 kMaxFileSize 返回 413；按 StorageType 直接保存或压缩后保存，并持久化元数据，成功返回 201 和 JSON。允许上传零字节文件：正文长度为 0 时跳过字节复制，仍创建空文件并保存元数据，不视为错误。文件创建、写入或元数据保存失败时返回 500，并尝试清理本次上传文件。
     static void Upload(evhttp_request *req, void *arg);
 
-    // 查询元数据并返回包含文件列表的 HTML 页面。
-    static void ShowFileList(evhttp_request *req, void *arg);
-
     // GET /api/files 返回文件元数据的 JSON 列表。
     static void ListFiles(evhttp_request *req, void *arg);
 
@@ -59,12 +55,6 @@ private:
 
     // 按服务端本地时区格式化为 YYYY-MM-DD HH:MM:SS，时钟转换在函数内部完成。
     static std::string FormatFileTime(std::filesystem::file_time_type t);
-
-    // 将文件字节数按 1024 进位格式化为 B/KB/MB/GB，保留两位小数。
-    static std::string FormatFileSize(uint64_t bytes);
-
-    // 根据元数据生成文件列表 HTML。
-    static std::string GenerateFileListHtml(const std::vector<FileMetadata> &files);
 
     // 根据文件元数据生成版本标识，用于缓存验证和断点续传。
     static std::string GetETag(const FileMetadata &info);

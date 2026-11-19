@@ -84,7 +84,8 @@
             color: white;
         }
 
-        button {
+        button,
+        .download-link {
             background: var(--secondary-color);
             color: white;
             border: none;
@@ -95,9 +96,11 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            text-decoration: none;
         }
 
-        button:hover {
+        button:hover,
+        .download-link:hover {
             opacity: 0.9;
             transform: translateY(-2px);
         }
@@ -161,11 +164,82 @@
             </button>
         </div>
 
-        <!-- 文件列表动态插入点 -->
-        {{FILE_LIST}}
+        <section class="file-list" aria-labelledby="fileListHeading">
+            <h3 id="fileListHeading">已上传文件</h3>
+            <p id="fileListStatus" role="status">正在加载文件列表…</p>
+            <div id="fileList"></div>
+        </section>
     </div>
 
     <script>
+        let latestFileListRequest = 0;
+
+        function formatFileSize(bytes) {
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let unit = 0;
+            while (bytes >= 1024 && unit < units.length - 1) {
+                bytes /= 1024;
+                ++unit;
+            }
+            return `${bytes.toFixed(2)} ${units[unit]}`;
+        }
+
+        async function refreshFileList() {
+            const request = ++latestFileListRequest;
+            const list = document.getElementById('fileList');
+            const status = document.getElementById('fileListStatus');
+            status.textContent = '正在加载文件列表…';
+            list.replaceChildren();
+
+            try {
+                const response = await fetch('/api/files', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const { files } = await response.json();
+
+                // 上传后的刷新可能先于页面打开时的请求完成。
+                if (request !== latestFileListRequest) return;
+                if (!Array.isArray(files)) throw new Error('文件列表响应格式错误');
+
+                const rows = document.createDocumentFragment();
+                for (const file of files) {
+                    const row = document.createElement('div');
+                    row.className = 'file-item';
+                    const info = document.createElement('div');
+                    info.className = 'file-info';
+
+                    const name = document.createElement('span');
+                    name.textContent = `📄${file.name}`;
+                    const storageType = document.createElement('span');
+                    storageType.className = 'file-type';
+                    storageType.textContent = file.storage_type === 'compressed' ? '压缩存储' : '未压缩存储';
+                    const size = document.createElement('span');
+                    size.textContent = `存储大小：${formatFileSize(file.stored_size_bytes)}`;
+                    const time = document.createElement('span');
+                    time.textContent = file.modified_time;
+                    info.append(name, storageType, size, time);
+
+                    const path = file.download_url;
+                    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') ||
+                        new URL(path, location.href).origin !== location.origin) {
+                        throw new Error('下载路径无效');
+                    }
+                    const download = document.createElement('a');
+                    download.className = 'download-link';
+                    download.href = path;
+                    download.textContent = '⬇️ 下载';
+                    row.append(info, download);
+                    rows.append(row);
+                }
+
+                list.replaceChildren(rows);
+                status.textContent = files.length ? '' : '暂无上传文件';
+            } catch (error) {
+                if (request !== latestFileListRequest) return;
+                console.error('加载文件列表失败:', error);
+                status.textContent = '文件列表加载失败，请刷新页面重试。';
+            }
+        }
+
         async function uploadFile() {
             const fileInput = document.getElementById('fileInput');
             const storageType = document.querySelector('input[name="storageType"]:checked').value;
@@ -192,7 +266,8 @@
                 });
 
                 if (response.ok) {
-                    location.reload();
+                    fileInput.value = '';
+                    await refreshFileList();
                 } else {
                     alert(`上传失败: ${response.status}`);
                 }
@@ -201,6 +276,8 @@
                 alert('网络连接失败');
             }
         }
+
+        refreshFileList();
     </script>
 </body>
 

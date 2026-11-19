@@ -122,38 +122,5 @@ std::string urlDecode(const std::string &url)
     return decoded;
 }
 
-std::string escapeHtmlText(const std::string &text)
-{
-    std::string escaped;
-
-    for (auto &ch : text)
-    {
-        switch (ch)
-        {
-            case '&':
-                escaped += "&amp;";
-                break;
-            case '<':
-                escaped += "&lt;";
-                break;
-            case '>':
-                escaped += "&gt;";
-                break;
-            case '"':
-                escaped += "&quot;";
-                break;
-            case '\'':
-                escaped += "&#39;";
-                break;
-            default:
-                escaped += ch;
-                break;
-        }
-    }
-
-
-    return escaped;
-}
-
 
 ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_END

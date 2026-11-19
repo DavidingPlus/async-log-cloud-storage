@@ -49,8 +49,6 @@ namespace service_test
         using Callback = void (*)(evhttp_request *, void *);
 
         static std::string formatFileTime(fs::file_time_type time);
-        static std::string formatFileSize(uint64_t size);
-        static std::string fileListHtml(const std::vector<server::FileMetadata> &files);
         static std::string etag(const server::FileMetadata &info);
         static size_t maxFileSize();
         static Callback callback();
@@ -79,7 +77,7 @@ namespace service_test
     fs::file_time_type FileTimeAt(int64_t unixSeconds, std::chrono::milliseconds fraction = std::chrono::milliseconds(500));
     server::FileMetadata ETagInfo(const std::string &name = "a.txt", size_t size = 1024, fs::file_time_type::rep ticks = 123456);
 
-    // 配置、模板和元数据均隔离；包括异常用例在内，每次测试后恢复构建目录中的原资源。
+    // 每次测试使用独立的元数据目录，结束后恢复构建目录中的服务端配置。
     class ServiceFixture : public ::testing::Test
     {
     protected:
@@ -87,39 +85,21 @@ namespace service_test
         void SetUp() override;
         void TearDown() override;
         void applyConfig() const;
-        void writeTemplate(const std::string &content) const;
         void writeMetadata(const std::vector<server::FileMetadata> &files) const;
         server::FileMetadata makeInfo(const std::string &name = "report.txt", size_t size = 1536, bool compressed = false) const;
-        static size_t Count(const std::string &text, const std::string &needle);
 
         fs::path m_configFile;
-        fs::path m_templateFile;
         fs::path m_metadataFile;
         fs::path m_directory;
-        fs::path m_originalWorkingDirectory;
         std::string m_originalConfig;
-        std::string m_originalTemplate;
         Json::Value m_config;
 
     private:
 
-        fs::perms m_templatePermissions = fs::perms::unknown;
-        bool m_savedResources = false;
+        bool m_savedConfig = false;
     };
 
-    struct SizeCase
-    {
-        uint64_t m_bytes;
-        const char *m_expected;
-    };
-
-    class ServiceSizeTests : public ::testing::TestWithParam<SizeCase>
-    {
-    };
     class ServiceConstructorTests : public ServiceFixture
-    {
-    };
-    class ServiceHtmlTests : public ServiceFixture
     {
     };
     class ServiceETagTests : public ::testing::Test

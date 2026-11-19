@@ -31,8 +31,6 @@ async function fixture(t) {
     const binary = path.join(directory, 'server');
     fs.copyFileSync(executable, binary);
     fs.mkdirSync(path.join(directory, 'config'));
-    fs.mkdirSync(path.join(directory, 'web'));
-    fs.copyFileSync(path.join(resources, 'web/template.html'), path.join(directory, 'web/template.html'));
     const config = JSON.parse(fs.readFileSync(path.join(resources, 'config/server.conf'), 'utf8'));
     config.server_ip = '127.0.0.1';
     config.server_port = port;
@@ -64,9 +62,9 @@ async function fixture(t) {
                 assert.equal(job.child.exitCode, null, job.stderr);
                 assert.equal(job.child.signalCode, null, job.stderr);
                 try {
-                    const response = await fetch(url, { signal: AbortSignal.timeout(300) });
+                    const response = await fetch(`${url}/api/files`, { signal: AbortSignal.timeout(300) });
                     assert.equal(response.status, 200);
-                    return await response.text();
+                    return await response.json();
                 } catch (error) {
                     if (error.code === 'ERR_ASSERTION') throw error;
                     await delay(20);
@@ -77,11 +75,11 @@ async function fixture(t) {
     };
 }
 
-test('first startup creates storage, serves HTTP, and restores uploads after a clean restart', { timeout: 15000 }, async t => {
+test('startup serves the API without web assets and restores uploads after restart', { timeout: 15000 }, async t => {
     const app = await fixture(t);
     let job = app.start();
-    const page = await app.ready(job);
-    assert.ok(page.includes('已上传文件'));
+    assert.deepEqual(await app.ready(job), { files: [] });
+    assert.equal((await fetch(app.url)).status, 404);
     assert.equal(fs.readFileSync(app.metadata, 'utf8'), '[]');
     for (const type of ['compressed', 'uncompressed'])
         assert.ok(fs.statSync(path.join(app.directory, 'data', type)).isDirectory());
@@ -110,11 +108,13 @@ test('first startup creates storage, serves HTTP, and restores uploads after a c
     const metadata = fs.readFileSync(app.metadata, 'utf8');
 
     job = app.start();
-    const restoredPage = await app.ready(job);
+    const { files: restoredFiles } = await app.ready(job);
     assert.equal(fs.readFileSync(app.metadata, 'utf8'), metadata);
+    assert.equal(restoredFiles.length, files.length);
     for (const file of files) {
-        assert.ok(restoredPage.includes(file.name));
-        const response = await fetch(app.url + file.url);
+        const restoredFile = restoredFiles.find(item => item.name === file.name);
+        assert.equal(restoredFile?.download_url, file.url);
+        const response = await fetch(app.url + restoredFile.download_url);
         assert.equal(response.status, 200);
         assert.deepEqual(Buffer.from(await response.arrayBuffer()), content);
     }
@@ -211,8 +211,7 @@ test('records request, upload, download and failure details in the log', { timeo
     fs.mkdirSync(storedFile);
     assert.equal((await fetch(app.url + url)).status, 500);
 
-    fs.rmSync(path.join(app.directory, 'web/template.html'));
-    assert.equal((await fetch(app.url)).status, 500);
+    assert.equal((await fetch(`${app.url}/api/files`)).status, 200);
 
     job.child.kill('SIGTERM');
     assert.deepEqual(await job.closed, [0, null], job.stderr);
@@ -225,7 +224,7 @@ test('records request, upload, download and failure details in the log', { timeo
     assert.match(log, /Upload rejected: missing headers/);
     assert.match(log, /Upload failed:/);
     assert.match(log, /Download failed:/);
-    assert.match(log, /Request failed:/);
+    assert.match(log, /File list count=1/);
     assert.equal(log.includes(name), false);
 });
 

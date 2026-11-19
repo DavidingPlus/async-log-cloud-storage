@@ -46,14 +46,11 @@ target("tests")
     if is_plat("linux") then
         add_deps("async-log-cloud-storage-server-static")
 
-        -- 服务端测试同步运行配置和页面，资源布局与服务端程序保持一致。
+        -- 服务端测试同步运行配置，布局与服务端程序保持一致。
         on_config(function (target)
             local configdir = path.join(target:targetdir(), "config")
-            local webdir = path.join(target:targetdir(), "web")
             os.mkdir(configdir)
-            os.mkdir(webdir)
             os.cp(path.join(os.projectdir(), "src/server/config/server.conf"), path.join(configdir, "server.conf"))
-            os.cp(path.join(os.projectdir(), "src/server/web/template.html"), path.join(webdir, "template.html"))
         end)
     end
 
@@ -96,7 +93,7 @@ if is_plat("linux") then
                 path.absolute(target:dep("async-log-cloud-storage-server"):targetfile())
             }})
             target:add("tests", "upload", {runargs = {
-                path.join(os.projectdir(), "test/server/upload_test.js")
+                path.join(os.projectdir(), "test/client/upload_test.js")
             }})
         end)
         on_test(function (_, opt)

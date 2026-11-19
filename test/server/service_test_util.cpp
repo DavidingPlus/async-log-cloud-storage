@@ -11,10 +11,6 @@ namespace service_test
 {
     std::string Access::formatFileTime(fs::file_time_type time) { return server::Service::FormatFileTime(time); }
 
-    std::string Access::formatFileSize(uint64_t size) { return server::Service::FormatFileSize(size); }
-
-    std::string Access::fileListHtml(const std::vector<server::FileMetadata> &files) { return server::Service::GenerateFileListHtml(files); }
-
     std::string Access::etag(const server::FileMetadata &info) { return server::Service::GetETag(info); }
 
     size_t Access::maxFileSize() { return server::Service::kMaxFileSize; }
@@ -67,13 +63,9 @@ namespace service_test
     {
         server::g_logger = dlog::LogManager::GetInstance().getDefaultLogger();
 
-        m_originalWorkingDirectory = fs::current_path();
         m_configFile = utils::executableDirectory() / "config/server.conf";
-        m_templateFile = utils::executableDirectory() / "web/template.html";
         m_originalConfig = utils::FileUtil(m_configFile).getContent();
-        m_originalTemplate = utils::FileUtil(m_templateFile).getContent();
-        m_templatePermissions = fs::status(m_templateFile).permissions();
-        m_savedResources = true;
+        m_savedConfig = true;
 
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
         for (int attempt = 0; attempt < 100; ++attempt)
@@ -98,32 +90,18 @@ namespace service_test
         m_config["uncompressed_files_dir"] = (m_directory / "uncompressed").string();
         m_config["metadata_file"] = m_metadataFile.string();
         applyConfig();
-        writeTemplate("<!DOCTYPE html>\n<html><body>{{FILE_LIST}}</body></html>\n");
     }
 
     void ServiceFixture::TearDown()
     {
-        std::error_code error;
-        if (!m_originalWorkingDirectory.empty())
+        if (m_savedConfig)
         {
-            fs::current_path(m_originalWorkingDirectory, error);
-            EXPECT_FALSE(error) << error.message();
-        }
-        if (m_savedResources)
-        {
-            // 删除模板、权限错误或目录占位等用例结束后，恢复原文件及其权限。
-            fs::permissions(m_templateFile, fs::perms::owner_all, fs::perm_options::add, error);
-            error.clear();
-            fs::remove_all(m_templateFile, error);
-            EXPECT_FALSE(error) << error.message();
-            EXPECT_NO_THROW(utils::FileUtil(m_templateFile).setContent(m_originalTemplate));
-            fs::permissions(m_templateFile, m_templatePermissions, error);
-            EXPECT_FALSE(error) << error.message();
             EXPECT_NO_THROW(utils::FileUtil(m_configFile).setContent(m_originalConfig));
             EXPECT_NO_THROW(server::Config::GetInstance().readConfig());
         }
         if (!m_directory.empty())
         {
+            std::error_code error;
             fs::remove_all(m_directory, error);
             EXPECT_FALSE(error) << error.message();
         }
@@ -134,8 +112,6 @@ namespace service_test
         utils::FileUtil(m_configFile).setContent(utils::JsonUtil::Serialize(m_config));
         server::Config::GetInstance().readConfig();
     }
-
-    void ServiceFixture::writeTemplate(const std::string &content) const { utils::FileUtil(m_templateFile).setContent(content); }
 
     void ServiceFixture::writeMetadata(const std::vector<server::FileMetadata> &files) const
     {
@@ -160,13 +136,6 @@ namespace service_test
         file.m_absoluteFilePath = (compressed ? server::Config::GetInstance().getCompressedFilesDirPath() : server::Config::GetInstance().getUncompressedFilesDirPath()) / name;
         file.m_url = "/download/" + name;
         return file;
-    }
-
-    size_t ServiceFixture::Count(const std::string &text, const std::string &needle)
-    {
-        size_t count = 0;
-        for (size_t pos = 0; std::string::npos != (pos = text.find(needle, pos)); pos += needle.size()) ++count;
-        return count;
     }
 
     void ServiceRunTests::expectNormalExit(int signal)
