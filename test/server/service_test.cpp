@@ -1061,6 +1061,76 @@ TEST_F(ServiceHttpTests, DownloadsUncompressedUploadsAsOriginalBytes)
     EXPECT_EQ(Access::data(service).getAll().size(), files.size());
 }
 
+TEST_F(ServiceHttpTests, ListsUploadedFilesWithStoredSizeLocalTimeAndDownloadUrl)
+{
+    const ScopedTimezone timezone("UTC-8");
+    server::Service service;
+    LocalHttpServer http(service);
+    const auto empty = http.get("/api/files");
+    ASSERT_EQ(empty.m_code, HTTP_OK);
+    EXPECT_EQ(empty.m_contentType, "application/json; charset=utf-8");
+    const auto emptyList = utils::JsonUtil::UnSerialize(empty.m_body);
+    EXPECT_EQ(emptyList["files"], Json::Value(Json::arrayValue));
+
+    Json::ArrayIndex count = 0;
+    for (const std::string type : {"uncompressed", "compressed"})
+    {
+        SCOPED_TRACE(type);
+        const std::string name = u8"中文 空格+%2F?# " + type + ".bin";
+        const std::string content = type == "compressed" ? std::string(4096, 'A') + '\0' : "";
+        const auto uploaded = http.post("/upload", {{"FileName", base64_encode(name)}, {"StorageType", type}}, content);
+        ASSERT_EQ(uploaded.m_code, 201);
+
+        auto info = Access::data(service).getFileMetaDataByRequestPath("/download/" + name);
+        info.m_mtime = FileTimeAt(946684800);
+        Access::data(service).update(info);
+
+        const auto response = http.get("/api/files");
+        ASSERT_EQ(response.m_code, HTTP_OK);
+        EXPECT_EQ(response.m_contentType, "application/json; charset=utf-8");
+        EXPECT_EQ(response.m_body.find(info.m_absoluteFilePath.string()), std::string::npos);
+        const auto result = utils::JsonUtil::UnSerialize(response.m_body);
+        const auto &files = result["files"];
+        ASSERT_TRUE(files.isArray());
+        ASSERT_EQ(files.size(), ++count);
+        const auto match = std::find_if(files.begin(), files.end(), [&](const Json::Value &file)
+                                        { return file["name"].asString() == name; });
+        ASSERT_NE(match, files.end());
+        const auto &file = *match;
+        EXPECT_EQ(file.size(), 5U);
+        EXPECT_EQ(file["storage_type"].asString(), type);
+        EXPECT_TRUE(file["stored_size_bytes"].isUInt64());
+        EXPECT_EQ(file["stored_size_bytes"].asUInt64(), fs::file_size(info.m_absoluteFilePath));
+        EXPECT_EQ(file["modified_time"].asString(), "2000-01-01 08:00:00");
+        const auto url = file["download_url"].asString();
+        EXPECT_EQ(url, utils::JsonUtil::UnSerialize(uploaded.m_body)["url"].asString());
+        EXPECT_NE(url.find("%2B%252F%3F%23%20"), std::string::npos);
+        const auto downloaded = http.get(url);
+        EXPECT_EQ(downloaded.m_code, HTTP_OK);
+        EXPECT_EQ(downloaded.m_body, content);
+    }
+}
+
+TEST_F(ServiceHttpTests, RejectsTheListWhenPersistedMetadataHasAnUnknownDirectoryOrInvalidUrl)
+{
+    auto unknownDirectory = makeInfo("outside.txt");
+    unknownDirectory.m_absoluteFilePath = m_directory / "outside" / "outside.txt";
+    auto oldPrefix = makeInfo("old.txt");
+    oldPrefix.m_url = "/old-files/old.txt";
+    auto unsafeUrl = makeInfo("unsafe.txt");
+    unsafeUrl.m_url = "//example.test/unsafe.txt";
+    for (const auto &invalid : {unknownDirectory, oldPrefix, unsafeUrl})
+    {
+        SCOPED_TRACE(invalid.m_url);
+        writeMetadata({makeInfo("valid.txt"), invalid});
+        server::Service service;
+        LocalHttpServer http(service);
+        const auto response = http.get("/api/files");
+        EXPECT_EQ(response.m_code, HTTP_INTERNAL);
+        EXPECT_TRUE(response.m_body.empty());
+    }
+}
+
 TEST_F(ServiceHttpTests, DownloadsCompressedUploadsWithoutTemporaryFiles)
 {
     server::Service service;
@@ -1157,6 +1227,12 @@ TEST_F(ServiceHttpTests, DownloadsUsingConfiguredPrefixAndDecodesTheOriginalPath
     const auto uploaded = http.post("/upload", {{"FileName", base64_encode(name)}, {"StorageType", "uncompressed"}}, "original");
     ASSERT_EQ(uploaded.m_code, 201);
     const auto url = utils::JsonUtil::UnSerialize(uploaded.m_body)["url"].asString();
+    const auto listed = http.get("/api/files?next=/files/missing.txt");
+    ASSERT_EQ(listed.m_code, HTTP_OK);
+    const auto files = utils::JsonUtil::UnSerialize(listed.m_body)["files"];
+    ASSERT_TRUE(files.isArray());
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0]["download_url"].asString(), url);
     const auto response = http.get(url + "?token=123&next=/download/missing.txt");
     EXPECT_EQ(response.m_code, HTTP_OK);
     EXPECT_EQ(response.m_body, "original");
@@ -1176,6 +1252,14 @@ TEST_F(ServiceHttpTests, DownloadsUsingTheFilePathRecordedInMetadata)
     auto info = server::FileMetadata::FromFile(path);
     info.m_url = "/download/alias.bin";
     Access::data(service).insert(info);
+
+    const auto listed = http.get("/api/files");
+    ASSERT_EQ(listed.m_code, HTTP_OK);
+    const auto files = utils::JsonUtil::UnSerialize(listed.m_body)["files"];
+    ASSERT_TRUE(files.isArray());
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0]["name"].asString(), "stored.bin");
+    EXPECT_EQ(files[0]["download_url"].asString(), info.m_url);
 
     const auto response = http.get(info.m_url);
     EXPECT_EQ(response.m_code, HTTP_OK);
@@ -1420,6 +1504,38 @@ TEST_F(ServiceRoutingTests, MatchesDownloadPrefixesOnlyAtTheStartOfThePath)
         EXPECT_EQ(http.get(unknownPath).m_code, HTTP_NOTFOUND);
         EXPECT_EQ(http.post(unknownPath, {}, "data").m_code, HTTP_NOTFOUND);
     }
+}
+
+TEST_F(ServiceRoutingTests, FileListAllowsOnlyGet)
+{
+    server::Service service;
+    LocalHttpServer http(service);
+    for (const auto method : {EVHTTP_REQ_POST, EVHTTP_REQ_HEAD, EVHTTP_REQ_PUT, EVHTTP_REQ_DELETE})
+    {
+        SCOPED_TRACE(method);
+        const auto response = http.request(method, "/api/files");
+        EXPECT_EQ(response.m_code, HTTP_BADMETHOD);
+        EXPECT_EQ(response.m_allow, "GET");
+    }
+    for (const auto method : {EVHTTP_REQ_OPTIONS, EVHTTP_REQ_TRACE, EVHTTP_REQ_PATCH})
+    {
+        SCOPED_TRACE(method);
+        EXPECT_EQ(http.request(method, "/api/files").m_code, HTTP_NOTIMPLEMENTED);
+    }
+    EXPECT_EQ(http.get("/api/files/").m_code, HTTP_NOTFOUND);
+}
+
+TEST_F(ServiceRoutingTests, DoesNotShadowAnExistingDownloadAtTheFileListPath)
+{
+    m_config["download_prefix"] = "/api/";
+    applyConfig();
+    server::Service service;
+    LocalHttpServer http(service);
+    ASSERT_EQ(http.post("/upload", {{"FileName", base64_encode(std::string("files"))}, {"StorageType", "uncompressed"}}, "existing").m_code, 201);
+    const auto response = http.get("/api/files");
+    EXPECT_EQ(response.m_code, HTTP_OK);
+    EXPECT_EQ(response.m_contentType, "application/octet-stream");
+    EXPECT_EQ(response.m_body, "existing");
 }
 
 TEST_F(ServiceRoutingTests, DecodesThePathBeforeRouting)

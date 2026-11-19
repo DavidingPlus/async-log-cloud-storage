@@ -230,6 +230,10 @@ void Service::GenericCallback(evhttp_request *req, void *arg) noexcept
         {
             Download(req, arg);
         }
+        else if ("/api/files" == requestPath)
+        {
+            ListFiles(req, arg);
+        }
         // 上传请求。
         else if ("/upload" == requestPath)
         {
@@ -490,6 +494,77 @@ void Service::ShowFileList(evhttp_request *req, void *arg)
     evbuffer_add(buf, content.data(), content.size());
     evhttp_add_header(evhttp_request_get_output_headers(req), "Content-Type", "text/html;charset=utf-8");
     evhttp_send_reply(req, HTTP_OK, nullptr, nullptr);
+}
+
+void Service::ListFiles(evhttp_request *req, void *arg)
+{
+    // 整体流程：检查 HTTP 方法 → 读取文件元数据快照 → 校验并组装列表 → 返回 JSON。
+    // 1. 文件列表接口只接受 GET，其他方法返回 405 并附带 Allow 头。
+    // 2. 从 DataManager 复制当前的元数据记录，空列表也返回 files 数组。
+    // 3. 逐条校验存储目录、文件名和下载路径，生成供前端展示和下载的字段。
+    // 4. 将列表序列化为 JSON 并返回 200，处理过程中抛出的异常交给 GenericCallback() 返回 500。
+
+    // 1. 检查 HTTP 方法，Allow 头告诉客户端这里接受 GET。
+    auto headers = evhttp_request_get_output_headers(req);
+
+    if (EVHTTP_REQ_GET != evhttp_request_get_command(req))
+    {
+        evhttp_add_header(headers, "Allow", "GET");
+        evhttp_send_reply(req, HTTP_BADMETHOD, "Method Not Allowed", nullptr);
+        return;
+    }
+
+    Service *service = static_cast<Service *>(arg);
+    auto &prefix = service->m_downloadPrefix;
+
+    // 2. 显式初始化 files 数组，确保存储为空时也返回 {"files":[]}。
+    Json::Value result;
+    auto &files = result["files"] = Json::Value(Json::arrayValue);
+
+    // getAll() 在读锁下复制元数据，后续校验和 JSON 组装使用这份快照。
+    for (auto &file : service->m_dataManager.getAll())
+    {
+        // 3. 根据文件所在的配置目录判断存储策略，再校验用于展示的文件名。
+        auto storageType = getStorageTypeFromFilePath(file.m_absoluteFilePath);
+        if (!storageType) throw std::runtime_error("ListFiles(): unknown storage directory");
+
+        auto name = file.m_absoluteFilePath.filename().string();
+        if (!isValidFileName(name)) throw std::runtime_error("ListFiles(): invalid file name");
+
+        // 下载路径须以配置前缀开头，后面只允许一个合法文件名，同时排除双斜杠开头和点目录段。
+        auto &url = file.m_url;
+        if (0 != url.compare(0, prefix.size(), prefix) ||
+            0 == url.compare(0, 2, "//") ||
+            !isValidFileName(std::string_view(url).substr(prefix.size())) ||
+            std::string::npos != url.find("/./") ||
+            std::string::npos != url.find("/../"))
+        {
+            throw std::runtime_error("ListFiles(): invalid download URL");
+        }
+
+        // 返回磁盘上的实际存储大小，并对外提供经过百分号编码的下载路径。
+        Json::Value item;
+        item["name"] = name;
+        item["storage_type"] = StorageType::Compressed == storageType.value() ? "compressed" : "uncompressed";
+        item["stored_size_bytes"] = static_cast<Json::UInt64>(file.m_fileSize);
+        item["modified_time"] = FormatFileTime(file.m_mtime);
+        item["download_url"] = utils::urlEncode(url);
+
+        files.append(std::move(item));
+    }
+
+    // 4. 准备 JSON 正文和响应头，全部成功后再发送 200。
+    auto body = utils::JsonUtil::Serialize(result);
+    std::unique_ptr<evbuffer, decltype(&evbuffer_free)> buffer(evbuffer_new(), evbuffer_free);
+
+    if (!buffer ||
+        0 != evbuffer_add(buffer.get(), body.data(), body.size()) ||
+        0 != evhttp_add_header(headers, "Content-Type", "application/json; charset=utf-8"))
+    {
+        throw std::runtime_error("ListFiles(): could not prepare JSON response");
+    }
+
+    evhttp_send_reply(req, HTTP_OK, nullptr, buffer.get());
 }
 
 void Service::Download(evhttp_request *req, void *arg)

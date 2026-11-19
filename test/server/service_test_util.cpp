@@ -242,6 +242,8 @@ namespace service_test
             if (acceptRanges) result.m_response.m_acceptRanges = acceptRanges;
             const char *contentRange = evhttp_find_header(evhttp_request_get_input_headers(req), "Content-Range");
             if (contentRange) result.m_response.m_contentRange = contentRange;
+            const char *allow = evhttp_find_header(evhttp_request_get_input_headers(req), "Allow");
+            if (allow) result.m_response.m_allow = allow;
             auto *body = evhttp_request_get_input_buffer(req);
             result.m_response.m_body.resize(evbuffer_get_length(body));
             if (!result.m_response.m_body.empty())
