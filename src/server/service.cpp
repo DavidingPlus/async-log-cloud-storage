@@ -12,6 +12,7 @@
 #include <ctime>
 #include <iomanip>
 #include <memory>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -33,19 +34,38 @@ ASYNC_LOG_CLOUD_STORAGE_NAMESPACE_BEGIN(server)
 namespace
 {
 
-    StorageType parseStorageType(const std::string &storageTypeText)
+    std::optional<StorageType> getStorageTypeFromText(std::string_view text)
     {
-        if ("uncompressed" == storageTypeText)
+        if ("uncompressed" == text)
         {
             return StorageType::Uncompressed;
         }
-        if ("compressed" == storageTypeText)
+        else if ("compressed" == text)
         {
             return StorageType::Compressed;
         }
         else
         {
-            throw std::invalid_argument("parseStorageType(): unsupported storage type: " + storageTypeText);
+            return std::nullopt;
+        }
+    }
+
+    std::optional<StorageType> getStorageTypeFromFilePath(const std::filesystem::path &filePath)
+    {
+        auto &config = Config::GetInstance();
+
+        // 将配置目录与文件名组合后比较完整路径，兼容目录末尾带 / 的写法。
+        if ((config.getUncompressedFilesDirPath() / filePath.filename()).lexically_normal() == filePath)
+        {
+            return StorageType::Uncompressed;
+        }
+        else if ((config.getCompressedFilesDirPath() / filePath.filename()).lexically_normal() == filePath)
+        {
+            return StorageType::Compressed;
+        }
+        else
+        {
+            return std::nullopt;
         }
     }
 
@@ -272,7 +292,7 @@ void Service::Upload(evhttp_request *req, void *arg)
         auto inputHeaders = evhttp_request_get_input_headers(req);
         const char *fileNameHeader = evhttp_find_header(inputHeaders, "FileName");
         const char *storageTypeHeader = evhttp_find_header(inputHeaders, "StorageType");
-        // nullptr 表示请求头中没有这个字段，必须在构造 std::string 前检查。
+        // nullptr 表示请求头中没有这个字段，必须在读取字段值前检查。
         if (!fileNameHeader || !storageTypeHeader)
         {
             DLOG_LOGGER_WARN(g_logger) << "Upload rejected: missing headers";
@@ -281,8 +301,7 @@ void Service::Upload(evhttp_request *req, void *arg)
             return;
         }
 
-        // 指针有效后，再将 C 字符串内容复制到 std::string，供后面的业务逻辑使用。
-        std::string encodedFileName = fileNameHeader, storageTypeText = storageTypeHeader;
+        std::string encodedFileName = fileNameHeader;
         // 字段存在也可能指向 ""，所以 FileName 还需检查空值；StorageType 的值由解析函数统一校验。
         if (encodedFileName.empty())
         {
@@ -292,13 +311,8 @@ void Service::Upload(evhttp_request *req, void *arg)
             return;
         }
 
-        // 解析函数负责值是否合法以及转换；Upload 捕获参数异常，转换成 HTTP 400 响应。
-        StorageType storageType;
-        try
-        {
-            storageType = parseStorageType(storageTypeText);
-        }
-        catch (...)
+        auto storageType = getStorageTypeFromText(storageTypeHeader);
+        if (!storageType)
         {
             DLOG_LOGGER_WARN(g_logger) << "Upload rejected: invalid storage type";
 
@@ -333,7 +347,7 @@ void Service::Upload(evhttp_request *req, void *arg)
         // 4. 请求头已解析为合法枚举，按枚举选择配置目录。
         std::filesystem::path directory;
 
-        switch (storageType)
+        switch (storageType.value())
         {
             case StorageType::Uncompressed:
                 directory = Config::GetInstance().getUncompressedFilesDirPath();
@@ -401,7 +415,7 @@ void Service::Upload(evhttp_request *req, void *arg)
         utils::FileUtil(directory).createDirectory();
 
         // bundle 可能对不适合压缩的内容保留原字节，因此 compressed 不保证文件更小。
-        if (StorageType::Compressed == storageType) content = utils::FileUtil::Compress(content, Config::GetInstance().getBundleFormat());
+        if (StorageType::Compressed == storageType.value()) content = utils::FileUtil::Compress(content, Config::GetInstance().getBundleFormat());
 
         // 写入前设置标记，保证写到一半失败时也能清理残留文件。
         fileWriteStarted = true;
@@ -424,7 +438,7 @@ void Service::Upload(evhttp_request *req, void *arg)
         fileWriteStarted = false;
 
         DLOG_LOGGER_INFO(g_logger) << "Upload completed file=" << utils::fileNameEncode(fileName)
-                                   << " storage=" << storageTypeText << " bytes=" << length
+                                   << " storage=" << storageTypeHeader << " bytes=" << length
                                    << " stored_bytes=" << info.m_fileSize;
 
         // 9. 数据文件和元数据文件全部保存成功后，用请求自带的输出缓冲区返回 201 和 JSON。
@@ -523,18 +537,8 @@ void Service::Download(evhttp_request *req, void *arg)
 
         // 4. 按照目录判断存储类型，同时判断数据文件是否存在。
         auto filePath = info.m_absoluteFilePath;
-        StorageType storageType;
-
-        // 将配置目录与文件名组合后比较完整路径，兼容目录末尾带 / 的写法。
-        if ((Config::GetInstance().getUncompressedFilesDirPath() / filePath.filename()).lexically_normal() == filePath)
-        {
-            storageType = StorageType::Uncompressed;
-        }
-        else if ((Config::GetInstance().getCompressedFilesDirPath() / filePath.filename()).lexically_normal() == filePath)
-        {
-            storageType = StorageType::Compressed;
-        }
-        else
+        auto storageType = getStorageTypeFromFilePath(filePath);
+        if (!storageType)
         {
             // 两个存储目录都未匹配，无法确定存储类型，返回内部错误并结束处理。但在正常的运作流程中根本走不到这个分支，只做防御性编程。
             DLOG_LOGGER_ERROR(g_logger) << "Download has unknown storage path=" << utils::urlEncode(filePath.string());
@@ -567,7 +571,7 @@ void Service::Download(evhttp_request *req, void *arg)
 
         // TODO 下载发送优化。评估 evbuffer_add_file() 文件/区间发送；压缩文件可参考独立解压临时文件中转，明确描述符所有权及临时文件清理时机。
 
-        bool compressed = storageType == StorageType::Compressed;
+        bool compressed = StorageType::Compressed == storageType.value();
 
         std::string content;
         if (compressed) content = utils::FileUtil::UnCompress(file.getContent());

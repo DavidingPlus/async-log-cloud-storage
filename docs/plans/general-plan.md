@@ -134,7 +134,7 @@ StorageType: uncompressed
 
 压缩存储只需将对应请求头改为 `StorageType: compressed`，请求体仍为原始文件字节。`StorageType` 描述服务端采用的存储策略，客户端无需预先压缩，也不指定压缩算法。bundle 对不适合压缩的内容可能保留原始字节，因此选择 `compressed` 不保证磁盘文件一定更小。
 
-当前 `Upload()` 先检查请求头原始指针是否为 `nullptr`，再构造 `std::string encodedFileName`、`std::string storageTypeText`，并检查 FileName 空值。本文件匿名命名空间中的 `parseStorageType()` 负责存储策略字符串的校验和枚举转换：只接受 `uncompressed`、`compressed`，空串或未知值抛出 `std::invalid_argument`；`Upload()` 捕获该异常并返回 400。后续目录选择和是否压缩均按枚举判断：
+当前 `Upload()` 先检查请求头原始指针是否为 `nullptr`，再构造 `std::string encodedFileName` 并检查 FileName 空值。`getStorageTypeFromText()` 将 `uncompressed` 和 `compressed` 转为对应的枚举值，遇到空串或未知值时返回 `std::nullopt`，由 `Upload()` 返回 400。后续目录选择和是否压缩均按枚举判断。
 
 ```cpp
 enum class StorageType
@@ -223,7 +223,7 @@ libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已
 
 #### 第 5 步：接入 HTTP 上传
 
-当前上传先检查 POST、请求头缺失及空值，将存储策略解析为枚举后再解码并校验文件名，通过按 URL 查询及磁盘路径检查拒绝同名；确认原始正文不超过 16 MiB 后才复制二进制正文、创建目录，直接保存或按 `bundle_format` 压缩后保存，再生成并持久化元数据，成功返回 201 和包含下载 `url` 的 JSON。允许零字节文件；元数据保存失败时由 DataManager 回滚内存，本函数尝试清理本次文件。`encodedFileName`、`storageTypeText` 在原始指针判空后构造为 `std::string`，FileName 通过 `empty()` 检查空值；`storageTypeText` 交给匿名命名空间函数 `parseStorageType()` 校验并转换为 `StorageType storageType`，参数异常由 Upload 转为 400，后续业务分支统一使用枚举。解码后的名称由匿名命名空间函数 `isValidFileName()` 校验，规则见第 3、5 节。上传结果、错误及上传文件清理失败已记录日志；元数据临时文件清理失败的单独记录仍待补充。严格 Base64 格式校验和并发写入时的排他创建仅作为可选增强。
+当前上传先检查 POST、请求头缺失及空值，将存储策略解析为枚举后再解码并校验文件名，通过按 URL 查询及磁盘路径检查拒绝同名；确认原始正文不超过 16 MiB 后才复制二进制正文、创建目录，直接保存或按 `bundle_format` 压缩后保存，再生成并持久化元数据，成功返回 201 和包含下载 `url` 的 JSON。允许零字节文件；元数据保存失败时由 DataManager 回滚内存，本函数尝试清理本次文件。请求头原始指针判空后，`FileName` 通过 `empty()` 检查空值，`StorageType` 交给 `getStorageTypeFromText()` 转换。转换结果为空时返回 400，后续业务分支使用枚举值。解码后的名称由匿名命名空间函数 `isValidFileName()` 校验，规则见第 3、5 节。上传结果、错误及上传文件清理失败已记录日志；元数据临时文件清理失败的单独记录仍待补充。严格 Base64 格式校验和并发写入时的排他创建仅作为可选增强。
 
 1. 使用第 5 节约定的 `POST /upload`，读取 `FileName`、`StorageType` 请求头，将 UTF-8 文件名从 Base64 解码，将请求头字符串解析为 `StorageType` 枚举并按枚举判断存储策略，并读取二进制请求体。
 2. 校验必填请求头、编码、文件名、原始文件大小、目标路径占用和下载 URL 冲突；接受 `uncompressed` 和 `compressed`，允许零字节文件。当前检查发生在 libevent 已完整缓冲正文之后，仅避免后续复制、压缩和写盘；分块上传及接收层独立的单次请求上限列为后续 TODO。
