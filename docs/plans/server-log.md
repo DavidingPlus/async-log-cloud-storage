@@ -22,7 +22,7 @@
 | `Service::run()` | 绑定成功后的监听地址和端口、事件循环退出；启动或运行异常在入口统一记录 | INFO / ERROR |
 | `Service::GenericCallback()` | 非法 URI、未知路由、未处理异常及原因；HTTP 响应仍保持简洁 | WARN / ERROR |
 | `Service::Upload()` | 成功时记录文件标识、存储类型、原始大小、实际存储大小和处理耗时；失败时记录原因，回滚清理失败单独记录 | INFO / WARN / ERROR |
-| `Service::ShowFileList()` | 模板读取或页面生成失败由外层统一记录；暂不记录每次成功展示 | ERROR |
+| `Service::ListFiles()` | 成功响应时记录列表条目数，异常由外层统一记录 | INFO / ERROR |
 | `Service::Download()` | 记录已提交响应的文件标识、存储类型、状态码、字节数及处理耗时；记录文件缺失、目录不匹配、读取或解压失败 | INFO / WARN / ERROR |
 | `DataManager` | 加载和持久化失败由调用方记录；临时文件清理失败的单独报告尚未接入 | ERROR |
 

@@ -10,7 +10,9 @@ Linux 单元测试复用服务端静态库，其他平台的测试依赖工具�
 
 两个内部静态库仅用于项目构建，不单独安装或打包。发布服务端时，所需内部实现静态链接到可执行程序中，实际需要的第三方动态库随程序一起打包。
 
-服务端资源随模块放在 `src/server/` 下：`src/server/config/server.conf` 保存运行配置，`src/server/web/template.html` 保存页面模板。XMake 配置阶段将它们分别同步到服务端和测试程序所在目录下的 `config/server.conf`、`web/template.html`；安装和打包后对应 `bin/config/server.conf`、`bin/web/template.html`。运行时通过可执行文件目录定位资源。
+服务端运行配置位于 `src/server/config/server.conf`。XMake 配置时同步到可执行文件旁的 `config/server.conf`，安装和打包后位于 `bin/config/server.conf`。服务端提供 `GET /api/files`、`POST /upload` 和配置前缀下的下载接口。
+
+Web 客户端位于 `src/client/web/index.html`，由前端静态站点提供。浏览器请求 `/api/files`、`/upload` 和配置的下载路径，静态站点可将这些路径同源代理到服务端。
 
 ## 启动服务（Linux）
 
@@ -19,7 +21,7 @@ xmake build -y async-log-cloud-storage-server
 xmake run async-log-cloud-storage-server
 ```
 
-默认访问 `http://127.0.0.1:8081/`。首次启动自动创建配置中的存储目录和元数据父目录，仅在元数据文件缺失时写入 `[]`；已有元数据读取或解析失败时报告错误并以非零状态退出，不重置历史数据。配置及其相对数据路径均以可执行文件所在目录为基准。
+默认访问 `http://127.0.0.1:7081/api/files`。首次启动自动创建配置中的存储目录和元数据父目录，仅在元数据文件缺失时写入 `[]`；已有元数据读取或解析失败时报告错误并以非零状态退出，不重置历史数据。配置及其相对数据路径均以可执行文件所在目录为基准。
 
 使用 Ctrl+C 或 SIGTERM 正常停止，再次启动会加载原元数据。服务端按配置创建轮转日志文件，记录启动、请求、上传、下载及错误信息，退出时等待日志排空。
 
@@ -41,14 +43,14 @@ rtk xmake test -y tests-js/upload
 也可直接执行脚本：
 
 ```bash
-rtk node test/server/upload_test.js
+rtk node test/client/upload_test.js
 ```
 
-该测试直接执行真实模板中的上传脚本，模拟 DOM 与 fetch，覆盖 IP、localhost、域名和 HTTPS 代理页面地址下的同源上传，以及普通、压缩两种策略。服务端 HTTP 测试同时覆盖不同 Host 下的上传、列表和下载；这些自动化测试不替代实际浏览器及反向代理联调。页面使用 `/upload` 相对地址，反向代理需将上传和下载路径转发到同一个服务。
+该测试直接执行真实页面脚本，模拟 DOM 与 fetch，覆盖 IP、localhost、域名和 HTTPS 代理页面地址下的同源请求、普通和压缩上传，以及列表渲染和刷新。服务端 HTTP 测试同时覆盖不同 Host 下的上传、列表查询和下载。反向代理需将 `/upload`、`/api/files` 和配置的下载路径转发到同一服务。
 
 应用启动测试随 `xmake test` 执行，也可单独运行 `xmake test -y tests-js/startup`；`xmake test -y 'tests-js/*'` 同时执行两组脚本测试。测试使用 Node.js，在临时目录中复制并运行正式服务端程序，覆盖首次启动、跨工作目录的资源定位、两种存储的上传与重启恢复、SIGINT/SIGTERM 正常退出，以及损坏元数据、端口占用和目录创建失败时的错误退出；不修改构建目录中的运行配置和数据。
 
-通用工具位于 `src/utils/`，使用 `utils` 命名空间，构建为各平台共用的内部静态库。对应测试按源码拆分为 `test/utils/common_test.cpp`、`test/utils/fileutil_test.cpp` 和 `test/utils/jsonutil_test.cpp`，覆盖可执行文件绝对路径及切换工作目录、十六进制转换、百分号编码、URL 路径与文件名编码、URL 解码、HTML 文本转义、文件属性与二进制读写、目录和符号链接、压缩解压、JSON 转换及错误处理。编码与转义测试覆盖全部 256 个字节、斜杠策略、UTF-8、内嵌空字节、已有编码或实体、长文本，以及编码和解码往返；百分号编码使用独立的固定期望值，避免只检查往返时漏掉双方共同的错误。文件测试使用独立临时目录并自动清理；权限用例在当前用户能够绕过权限限制时跳过；符号链接、设备或跨根路径相关用例在环境不支持时跳过。`JsonUtil` 测试沿用接口当前的 JsonCpp 默认解析配置。
+通用工具位于 `src/utils/`，使用 `utils` 命名空间，构建为各平台共用的内部静态库。对应测试按源码拆分为 `test/utils/common_test.cpp`、`test/utils/fileutil_test.cpp` 和 `test/utils/jsonutil_test.cpp`，覆盖可执行文件绝对路径及切换工作目录、十六进制转换、百分号编码、URL 路径与文件名编码、URL 解码、文件属性与二进制读写、目录和符号链接、压缩解压、JSON 转换及错误处理。编码测试覆盖全部 256 个字节、斜杠策略、UTF-8、内嵌空字节、已有百分号编码、长文本，以及编码和解码往返。百分号编码使用独立的固定期望值，避免只检查往返时漏掉双方共同的错误。文件测试使用独立临时目录并自动清理；权限用例在当前用户能够绕过权限限制时跳过；符号链接、设备或跨根路径相关用例在环境不支持时跳过。`JsonUtil` 测试沿用接口当前的 JsonCpp 默认解析配置。
 
 `utils::executableFullPath()` 和 `utils::executableDirectory()` 返回 `std::filesystem::path`，分别表示当前进程可执行文件的绝对路径和所在目录，不受当前工作目录影响。支持 Windows 和 Linux，可通过 `utils::executableDirectory() / "config" / "server.conf"` 定位运行配置。
 
@@ -62,7 +64,7 @@ Linux 服务端的 `Config::readConfig()` 从可执行文件目录下的 `config
 
 `FileMetadata::FromFile()` 生成的绝对路径也经过词法标准化。`DataManager` 在加载历史 JSON、插入和更新元数据时统一标准化文件路径；按路径查询时，先以可执行文件目录解析为绝对路径，再标准化后比较，因此 `.`、`..` 等不同写法可以匹配同一条记录。查询不要求文件存在，不解析符号链接；加载时只标准化内存中的路径，后续持久化时才写出标准化后的路径。
 
-Config 测试覆盖首次构造与单例复用、配置字段读取和重载、工作目录中存在另一份配置时的定位、文件缺失和目录占位、读取权限、JSON 错误、必填字段缺失及字段类型错误、32/64 位数值越界、端口边界、全部支持的压缩格式、下载前缀、Unicode 与路径解析、切换工作目录后路径保持不变、额外字段，以及各种失败后的旧值保留和恢复加载。首次构造及失败重试通过 GTest 的 `threadsafe` 进程测试执行，保证单例尚未初始化，且不依赖测试顺序。测试会恢复原配置、文件权限和工作目录，并清理临时文件；当前用户能绕过读取权限时跳过对应权限用例。数值类型沿用 JsonCpp 的 `isInt()` 语义，`8081.0` 等能表示为 `int` 的整数值也会被接受。
+Config 测试覆盖首次构造与单例复用、配置字段读取和重载、工作目录中存在另一份配置时的定位、文件缺失和目录占位、读取权限、JSON 错误、必填字段缺失及字段类型错误、32/64 位数值越界、端口边界、全部支持的压缩格式、下载前缀、Unicode 与路径解析、切换工作目录后路径保持不变、额外字段，以及各种失败后的旧值保留和恢复加载。首次构造及失败重试通过 GTest 的 `threadsafe` 进程测试执行，保证单例尚未初始化，且不依赖测试顺序。测试会恢复原配置、文件权限和工作目录，并清理临时文件；当前用户能绕过读取权限时跳过对应权限用例。数值类型沿用 JsonCpp 的 `isInt()` 语义，`7081.0` 等能表示为 `int` 的整数值也会被接受。
 
 `FileMetadata` 的基础测试位于 `test/server/datamanager_test.cpp`，通过 `xmake test tests/server` 执行，检查正常文件的元数据字段及文件不存在时的异常。
 
@@ -93,7 +95,7 @@ async-log-cloud-storage-server-linux-x86_64-release-v0.0.0.tar.gz
 
 解压后，进入 `bin/` 目录，按需修改其中的 `config/server.conf`，再执行 `./async-log-cloud-storage-server`。第三方动态库位于 `lib/`，程序通过相对自身位置的 RPATH 查找它们，可以整体移动解压目录。没有实际使用第三方动态库时，发布包可能只有 `bin/`。
 
-`$ORIGIN/../lib` 在链接阶段直接写入程序，并使用 RPATH 支持间接动态库依赖；安装和打包阶段保留该设置，不需要额外的 ELF 修改工具。开发时使用 `xmake run async-log-cloud-storage-server`，由 XMake 提供依赖包的运行环境。修改 `src/server/config/server.conf` 或 `src/server/web/template.html` 后，执行 `xmake config`，配置阶段会将文件同步到可执行文件目录下的 `config/server.conf`、`web/template.html`，无需先编译服务端。
+`$ORIGIN/../lib` 在链接阶段直接写入程序，并使用 RPATH 支持间接动态库依赖；安装和打包阶段保留该设置，不需要额外的 ELF 修改工具。开发时使用 `xmake run async-log-cloud-storage-server`，由 XMake 提供依赖包的运行环境。修改 `src/server/config/server.conf` 后，执行 `xmake config` 将更新同步到可执行文件旁的 `config/server.conf`。
 
 系统基础库（如 glibc）由目标系统提供，发布环境仍需匹配 CPU 架构和系统运行库版本。
 

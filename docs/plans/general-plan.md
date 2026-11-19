@@ -70,8 +70,8 @@ flowchart LR
 | `src/server/config.h/.cpp` | 已实现服务地址、端口、下载前缀、文件目录、元数据路径和压缩格式配置 |
 | `src/utils/fileutil.h/.cpp`、`src/utils/common.h/.cpp` | 已实现路径定位、二进制读写、目录操作、压缩解压、URL 编解码与 HTML 文本转义等通用功能 |
 | `src/server/datamanager.h/.cpp` | 已实现 `FileMetadata`、内存查询、JSON 持久化和启动恢复 |
-| `src/server/service.h/.cpp` | 已实现 HTTP 监听、路由、列表页面、两种上传策略及完整文件下载；上传参数和下载策略使用存储类型枚举 |
-| `src/server/web/template.html` | 服务端页面模板，包含文件选择、上传、列表和下载链接 |
+| `src/server/service.h/.cpp` | HTTP 监听和路由，提供文件列表、两种上传策略及文件下载接口 |
+| `src/client/web/index.html` | 独立提供的 Web 客户端页面，包含文件选择、上传、列表和下载链接 |
 | `src/server/config/server.conf` | 服务端 JSON 运行配置，区别于 XMake 生成的编译配置头文件 |
 
 第一版使用单个 HTTP 事件循环，在 HTTP 回调中同步完成文件处理。继续使用当前 `DataManager` 的内存表和读写锁；后续引入业务工作线程时，再统一设计文件操作、持久化和请求生命周期之间的并发关系。
@@ -97,11 +97,11 @@ dlog 1.1.0 使用 `LogManager` 管理异步 `Logger`，通过 `LogWorker` 和文
 
 ## 5. 第一版 HTTP 协议
 
-以下协议保留参考项目的上传、下载和展示功能。上传沿用参考项目的自定义请求头方式，存储类型取值统一为本项目的明确语义；文件列表由首页直接渲染，独立 `/files` JSON 接口作为可选增强。
+以下协议保留参考项目的上传、下载和展示功能。上传沿用参考项目的自定义请求头方式。浏览器请求文件列表接口并在页面上渲染结果。
 
 | 方法与路径 | 请求和响应 |
 | --- | --- |
-| `GET /` | 返回页面 |
+| `GET /api/files` | 返回文件元数据 JSON，字段约定见[文件列表接口计划](frontend-file-list.md) |
 | `POST /upload` | 通过 `FileName` 和 `StorageType` 请求头传递上传参数；请求体为原始文件字节，类型为 `application/octet-stream`；成功返回 201 和结果 JSON |
 | `GET /download/<URL编码的文件名>` | 返回原文件内容，成功状态为 200 |
 
@@ -124,7 +124,7 @@ dlog 1.1.0 使用 `LogManager` 管理异步 `Logger`，通过 `LogWorker` 和文
 
 ```http
 POST /upload HTTP/1.1
-Host: localhost:8081
+Host: localhost:7081
 Content-Type: application/octet-stream
 FileName: YS50eHQ=
 StorageType: uncompressed
@@ -159,19 +159,15 @@ enum class StorageType
 | `static GenericCallback(evhttp_request *, void *)` | 通用请求回调，解析路径并分发请求 |
 | `static Upload(evhttp_request *, void *)` | 解析请求头和正文，保存文件并提交元数据 |
 | `static FormatFileTime(std::filesystem::file_time_type)` | 直接接收文件修改时间，在函数内部完成日历时间转换和格式化 |
-| `static GenerateFileListHtml(const std::vector<FileMetadata> &)` | 生成文件列表 HTML |
-| `static FormatFileSize(uint64_t)` | 格式化文件大小 |
-| `static ShowFileList(evhttp_request *, void *)` | 查询元数据并返回包含文件列表的 HTML 页面 |
+| `static ListFiles(evhttp_request *, void *)` | 查询元数据并返回文件列表 JSON |
 | `static GetETag(const FileMetadata &)` | 根据元数据生成 ETag |
 | `static Download(evhttp_request *, void *)` | 按请求路径查找元数据，读取或解压后返回原始字节 |
 
-请求处理函数统一保留参考实现的 `(evhttp_request *, void *)` 参数，不预先拆分实例分发函数或注入 `DataManager`。`run()` 已实现事件循环和 HTTP 服务创建、配置地址与端口监听，以及通用回调注册；注册 `GenericCallback` 时以 `this` 作为上下文。资源以智能指针管理，按 HTTP 服务、事件循环的顺序自动释放；正常结束直接返回，创建事件循环或 HTTP 服务、绑定监听、注册信号或运行事件循环失败时抛出 `std::runtime_error`。SIGINT/SIGTERM 已通过 libevent 信号事件接入，退出循环后自动释放资源并正常返回。文件时间、文件大小、列表 HTML 和 ETag 辅助函数已实现；`GenericCallback()` 已实现请求分发，`ShowFileList()` 已实现页面响应，`Upload()` 已实现直接保存和压缩保存的基础流程，`Download()` 已支持完整或单区间原文下载及强 ETag 的 If-Range 校验，详见第 7 节。
+`run()` 创建 HTTP 服务和事件循环，按配置监听地址与端口，并注册 `GenericCallback()`，以 `this` 作为上下文。资源以智能指针管理，按 HTTP 服务、事件循环的顺序自动释放；正常结束直接返回，创建事件循环或 HTTP 服务、绑定监听、注册信号或运行事件循环失败时抛出 `std::runtime_error`。SIGINT/SIGTERM 已通过 libevent 信号事件接入，退出循环后自动释放资源并正常返回。`Upload()` 支持直接保存和压缩保存。`Download()` 支持完整或单区间原文下载及强 ETag 的 If-Range 校验，详见第 7 节。
 
-第一版沿用 `ShowFileList()` 直接生成列表页面，不要求拆分独立 `/files` 接口。
+`Service` 构造时通过成员 `DataManager m_dataManager` 加载持久化元数据。`ListFiles()` 通过 `m_dataManager.getAll()` 读取快照，返回文件列表 JSON。Web 静态站点提供页面，并同源代理 `/api/files`、`/upload` 和配置的下载前缀到服务端。
 
-`Service` 通过对象成员 `DataManager m_dataManager` 拥有元数据管理器，其生命周期随服务对象管理，构造时加载持久化文件。`ShowFileList()` 通过回调参数 `arg` 取回当前 `Service`，调用 `m_dataManager.getAll()`，读取可执行文件旁的 `web/template.html`，用 `std::regex_replace()` 替换 `{{FILE_LIST}}`，最后写入请求的输出缓冲区，以 `text/html;charset=utf-8` 返回 HTTP 200。页面通过 `fetch('/upload', ...)` 同源上传，不再注入配置中的监听 IP 和端口；反向代理需将上传及下载路径转发到同一个服务。
-
-`GenericCallback()` 当前按参考流程提取 URI 路径并进行 URL 解码，再依次判断：路径以配置下载前缀开头时调用 `Download()`，路径等于 `/upload` 时调用 `Upload()`，路径等于 `/` 时调用 `ShowFileList()`，其余返回 404。通用回调声明为 `noexcept`，URI 或路径指针缺失时返回 400；仅将路径解码的 `std::invalid_argument` 转为 400，其他未处理的业务异常由最外层 `catch (...)` 转为 500，避免异常逸出事件循环。真实 HTTP 测试验证非法百分号编码、模板缺失、目录占位及读取失败的响应，并在失败后继续请求和恢复资源。`Upload()` 已校验 POST，`Download()` 已校验 GET。下载从请求的原始编码路径重新取值并解码，不对 GenericCallback 的解码结果再次解码。下载路由使用 `find(prefix) == 0` 从路径起始位置匹配，默认及自定义前缀下的未知路径均有回归测试；未增加配置校验或重构路径解析。
+`GenericCallback()` 提取并解码 URI 路径，先按配置的下载前缀匹配 `Download()`，再按 `/api/files`、`/upload` 分别调用 `ListFiles()`、`Upload()`，其余返回 404。URI 或路径指针缺失以及路径解码的 `std::invalid_argument` 返回 400。外层异常处理将其他 `std::exception` 转为 500。`Upload()` 接受 POST，`ListFiles()` 和 `Download()` 接受 GET。`Download()` 从请求的原始编码路径取值并解码一次。真实 HTTP 测试覆盖非法百分号编码、未知路径及自定义下载前缀。
 
 启动阶段的顺序是“配置 → 日志 → 数据目录及缺失的元数据文件初始化 → 构造 `Service`（同时构造并加载成员 `DataManager`）→ `Service::run()`”。`main()` 已完成配置、日志初始化、目录准备、缺失元数据初始化和 Service 启动，仅在元数据路径缺失时写入 `[]`；已有元数据加载失败时输出错误并以非零状态退出，不覆盖历史数据。Service 停止后关闭日志系统并等待排空。
 
@@ -191,11 +187,11 @@ Service 通过 `evsignal_new()` 注册 SIGINT/SIGTERM，回调只调用 `event_b
 
 #### 第 2 步：最小 HTTP 服务（Service 已完成）
 
-libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已实现。`GET /` 已返回文件列表页面，未知路径返回 404；SIGINT/SIGTERM 可使 `run()` 正常返回。
+libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已实现。未知路径返回 404。SIGINT/SIGTERM 可使 `run()` 正常返回。
 
 `main()` 已接入首次启动准备、`Service::run()` 和日志生命周期，异常时以非零状态退出，日志器创建后发生的异常记录到文件；正式程序的启动测试已覆盖首次运行、重启恢复、信号退出和失败时的数据保护。Chromium 本地验收已通过。
 
-验收：访问 `http://127.0.0.1:8081/` 能获得响应；停止服务后有完整的关闭日志。
+验收：访问 `http://127.0.0.1:7081/api/files` 能获得响应；停止服务后有完整的关闭日志。
 
 #### 第 3 步：配置与文件工具
 
@@ -245,7 +241,7 @@ libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已
 
 下载结果和错误已记录日志。文件由服务管理，不实现外部修改后的自动同步，文件损坏检测仅作为可选增强；已有读写及解压异常处理保留。单区间 Range / If-Range 已实现；HEAD、缓存条件请求、流式传输及解压过程内存限额仍为可选增强。
 
-1. `GET /` 直接渲染文件列表及下载链接，不要求独立 `/files` JSON 接口。
+1. `GET /api/files` 返回文件列表及下载链接，供客户端自行渲染。
 2. `GET /download/<编码后的文件名>` 根据元数据定位文件，并返回原始二进制内容。
 3. 路径中的名称按 URL 路径规则解码一次，正确保留加号；使用服务端记录的路径查找文件。
 4. 设置合适的响应类型和下载文件名；文件不存在时返回 404。
@@ -256,7 +252,7 @@ libevent 依赖、HTTP 监听、回调注册、事件循环和资源释放均已
 
 #### 第 7 步：浏览器页面（已实现，待实际验收）
 
-1. `GET /` 返回填充后的页面模板，源码位于 `src/server/web/template.html`，运行时按可执行文件目录下的 `web/template.html` 定位；XMake 配置、安装和打包时同步页面资源。
+1. 从 `src/client/web/` 部署静态站点，入口为 `index.html`。将列表、上传及下载请求转发到服务端。
 2. 页面提供文件选择、存储策略选择、上传按钮、文件列表和下载链接。
 3. 浏览器以文件对象作为请求体，用 `fetch('/upload', ...)` 同源上传；文件名先转为 UTF-8 字节再进行 Base64 编码，放入 `FileName` 请求头；`StorageType` 根据页面选择发送 `uncompressed` 或 `compressed`。不要直接对含中文的文件名调用 `btoa(file.name)`。
 4. 上传成功后重新请求列表；页面显示服务端返回的错误。文件名按文本渲染，使用同源相对 URL。
@@ -371,7 +367,7 @@ dlog 1.1.0 的 FATAL 与其他等级一样异步提交，不自动刷新或终�
 
 当前仓库采用“通用工具静态库 + Linux 服务端静态库 + 服务端可执行程序 + 单元测试”的 XMake 应用工程，服务端主目标为 `async-log-cloud-storage-server`。已有 Linux 安装与打包流程，通用工具、服务端配置和元数据管理已有实现与单元测试。
 
-当前包依赖包括 libevent、bundle、JsonCpp、cpp-base64、UTF8-CPP 和 dlog。`Service` 已具备上传、列表页面和完整文件下载，两种存储策略通过真实 HTTP 测试；`src/server/main.cpp` 已接入首次启动准备、日志生命周期和服务运行，正式程序的启动与重启恢复已有隔离测试。Chromium 本地整体验收已通过。
+当前包依赖包括 libevent、bundle、JsonCpp、cpp-base64、UTF8-CPP 和 dlog。`Service` 提供上传、文件列表和文件下载接口，两种存储策略均通过真实 HTTP 测试。`src/server/main.cpp` 已接入首次启动准备、日志生命周期和服务运行，正式程序的启动与重启恢复已有隔离测试。独立 Web 客户端的浏览器验收见[文件列表接口计划](frontend-file-list.md)。
 
 上传采用自定义请求头协议：`FileName` 传递 UTF-8 文件名的 Base64 编码，`StorageType` 使用 `uncompressed`、`compressed`。相关业务、页面同源上传及 16 MiB 原始文件大小上限已实现；应用启动、重启恢复和本地浏览器及 HTTP 代理验收通过。
 

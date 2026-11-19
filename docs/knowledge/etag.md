@@ -19,7 +19,7 @@ ETag: "v1"
 
 ```http
 GET /download/a.txt HTTP/1.1
-Host: localhost:8081
+Host: localhost:7081
 If-None-Match: "v1"
 ```
 
@@ -44,7 +44,7 @@ ETag 参与验证版本，是否允许缓存、何时需要验证还取决于 `C
 
 ```http
 GET /download/a.txt HTTP/1.1
-Host: localhost:8081
+Host: localhost:7081
 Range: bytes=4-
 If-Range: "v1"
 ```
@@ -112,7 +112,7 @@ Content-Length: 6
 生成时需要注意：
 
 - 同一版本应生成稳定标签，避免使用请求发生时的当前时间或随机数。
-- 使用原始元数据，不使用面向展示的 `FormatFileSize()`、`FormatFileTime()`；展示结果会舍入或涉及时区转换。
+- 使用元数据中的原始字节数和时间值，避免展示格式中的舍入和时区转换影响 ETag。
 - 文件名保留 ASCII 字母、数字以及 `-_.~`，其余字节按 `%HH` 编码后再拼接；例如 `a b.txt` 变为 `a%20b.txt`，文件名中原有的 `%` 也会编码，避免不同名称生成相同的编码结果。
 - 本方案依赖受控的文件更新流程：内容改变时，文件大小或修改时间必须随之变化，并同步刷新元数据。直接修改内容后保留原有大小和修改时间，会破坏强校验约定。
 - 本项目下载返回原始内容，压缩文件的 `m_fileSize` 则记录存储大小；更新存储文件后，需要同步刷新参与标签生成的元数据。

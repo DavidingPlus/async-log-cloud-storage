@@ -6,7 +6,7 @@
 
 ```http
 GET /download/a%20b.txt?token=123 HTTP/1.1
-Host: 127.0.0.1:8081
+Host: 127.0.0.1:7081
 
 ```
 
@@ -21,7 +21,7 @@ Host: 127.0.0.1:8081
 | 请求方法 | `GET` |
 | HTTP 版本 | `1.1` |
 | 原始 URI 字符串 | `/download/a%20b.txt?token=123` |
-| 请求头 | `Host` → `127.0.0.1:8081` |
+| 请求头 | `Host` → `127.0.0.1:7081` |
 | 请求正文 | 空 |
 | 已解析的 URI | 指向下一节所描述的 `evhttp_uri` 对象 |
 
@@ -47,7 +47,7 @@ libevent 用来构造 URI 对象的是请求行中的资源地址这一段：
 | 查询字符串 `query` | `token=123` |
 | 片段 `fragment` | 未设置，`nullptr` |
 
-这条资源地址只有路径和查询字符串，因此主机和端口未设置。`Host: 127.0.0.1:8081` 属于请求头，保存在 `evhttp_request` 的请求头信息中，不会复制进这个 URI 对象。请求方法 GET 和 HTTP 版本也属于请求本身的信息。
+这条资源地址只有路径和查询字符串，因此主机和端口未设置。`Host: 127.0.0.1:7081` 属于请求头，保存在 `evhttp_request` 的请求头信息中，不会复制进这个 URI 对象。请求方法 GET 和 HTTP 版本也属于请求本身的信息。
 
 ## 从 req 读取 URI、path 和 query
 
@@ -117,8 +117,8 @@ catch (const std::invalid_argument &)
 2. 路径 `/download/a%20b.txt`。
 3. 解码后的路径 `/download/a b.txt`。
 
-回调按路径判断下载、上传或首页处理。查询参数 `token=123` 不参与当前路由匹配，完整的 `req` 和上下文 `arg` 会继续传给对应业务处理函数。
+回调按路径分发下载、上传或文件列表请求。查询参数 `token=123` 不参与路由匹配，完整的 `req` 和上下文 `arg` 会传给对应业务处理函数。
 
-上述步骤和业务分发均位于通用回调最外层的 `try` 内。路径解码的参数错误返回 400；模板读取等未处理的业务异常由外层 `catch (...)` 统一返回 500，不把内部异常消息发送给客户端。`GenericCallback()` 声明为 `noexcept`，异常不会传播出 libevent 事件循环，失败请求之后仍可处理后续请求。
+上述步骤和业务分发均位于通用回调最外层的 `try` 内。路径解码的参数错误返回 400。外层处理将异常元数据等未处理的 `std::exception` 转为 500，响应正文保持为空。`GenericCallback()` 声明为 `noexcept`，后续请求仍可正常处理。
 
 代码命名约定：`requestPath` 表示解码后的 HTTP 请求路径，用于路由及 `getFileMetaDataByRequestPath()` 查询；`filePath` 表示元数据记录的磁盘文件路径，用于文件读写及 `getFileMetaDataByFilePath()` 查询。
